@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 // library version is defined in gradle.properties
 val libraryVersion: String by project
+extra["isReleaseVersion"] = !libraryVersion.toString().endsWith("SNAPSHOT")
 
 plugins {
     id("com.android.library")
@@ -71,21 +72,21 @@ afterEvaluate {
                     name.set("libportal-android")
                     description.set("Android bindings for libportal")
                     url.set("https://twenty-two.xyz")
-                    // licenses {
-                    //     license {
-                    //         name.set("APACHE 2.0")
-                    //         url.set("https://github.com/bitcoindevkit/bdk/blob/master/LICENSE-APACHE")
-                    //     }
-                    //     license {
-                    //         name.set("MIT")
-                    //         url.set("https://github.com/bitcoindevkit/bdk/blob/master/LICENSE-MIT")
-                    //     }
-                    // }
-                    // scm {
-                    //     connection.set("scm:git:github.com/bitcoindevkit/bdk-ffi.git")
-                    //     developerConnection.set("scm:git:ssh://github.com/bitcoindevkit/bdk-ffi.git")
-                    //     url.set("https://github.com/bitcoindevkit/bdk-ffi/tree/master")
-                    // }
+                    licenses {
+                        license {
+                            name.set("APACHE 2.0")
+                            url.set("https://github.com/TwentyTwoHW/portal-software/blob/master/sdk/LICENSE-APACHE")
+                        }
+                        license {
+                            name.set("MIT")
+                            url.set("https://github.com/TwentyTwoHW/portal-software/blob/master/sdk/LICENSE-MIT")
+                        }
+                    }
+                    scm {
+                        connection.set("scm:git:github.com/TwentyTwoHW/portal-software.git")
+                        developerConnection.set("scm:git:ssh://github.com/TwentyTwoHW/portal-software.git")
+                        url.set("https://github.com/TwentyTwoHW/portal-software/tree/master")
+                    }
                 }
             }
         }
@@ -93,10 +94,10 @@ afterEvaluate {
 }
 
 signing {
-    val signingKeyId: String? by project
-    val signingKey: String? by project
-    val signingPassword: String? by project
-    useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+    setRequired({
+        (project.extra["isReleaseVersion"] as Boolean) && gradle.taskGraph.hasTask("publish")
+    })
+    useGpgCmd()
     sign(publishing.publications)
 }
 

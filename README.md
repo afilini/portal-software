@@ -132,5 +132,7 @@ A React Native module is available at `./sdk/libportal-react-native`. It depends
 
 ## Licensing
 
-This project is licensed under GPL 3.0 or later. You can find a full copy of the license in the LICENSE file. For any questions regarding derivative work you can contact us
+Most of this project is licensed under GPL 3.0 or later. You can find a full copy of the license in the LICENSE file. For any questions regarding derivative work you can contact us
 at [contact@twenty-two.xyz](mailto:contact@twenty-two.xyz)
+
+Some components, specificially the `model` and `sdk` libraries are licensed under MIT or Apache 2.0, at your discretion.
