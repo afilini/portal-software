@@ -80,7 +80,11 @@ android {
 repositories {
   mavenCentral()
   google()
-  mavenLocal()
+
+  // Maven snapshots
+  maven {
+    url "https://s01.oss.sonatype.org/content/repositories/snapshots/"
+  }
 }
 
 def kotlin_version = getExtOrDefault("kotlinVersion")
@@ -93,6 +97,6 @@ dependencies {
   implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 
   implementation "net.java.dev.jna:jna:5.14.0@aar"
-  implementation "xyz.twenty_two:libportal-android:0.1.0-SNAPSHOT@aar"
+  implementation "xyz.twenty-two:libportal-android:0.1.0-SNAPSHOT@aar"
 }
 

@@ -82,7 +82,7 @@ pkgs.mkShell rec {
     rust
   ]
     ++ lib.optionals withEmbedded (with pkgs; [ probe-rs gcc-arm-embedded qemu gdb openocd hal clang ])
-    ++ lib.optionals withAndroid (with pkgs; [ cargo-ndk jdk ]);
+    ++ lib.optionals withAndroid (with pkgs; [ cargo-ndk jdk gnupg ]);
 
   RUST_BACKTRACE = 1;
   LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";

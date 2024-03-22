@@ -63,7 +63,7 @@ afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("maven") {
-                groupId = "xyz.twenty_two"
+                groupId = "xyz.twenty-two"
                 artifactId = "libportal-android"
                 version = libraryVersion
 

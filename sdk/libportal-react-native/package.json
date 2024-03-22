@@ -41,14 +41,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/afilini/libportal-react-native.git"
+    "url": "git+https://github.com/TwentyTwoHW/portal-software.git"
   },
   "author": "Alekos Filini <alekos@twenty-two.xyz> (https://github.com/afilini)",
-  "license": "MIT",
+  "license": "MIT or APACHE-2.0",
   "bugs": {
-    "url": "https://github.com/afilini/libportal-react-native/issues"
+    "url": "https://github.com/TwentyTwoHW/portal-software/issues"
   },
-  "homepage": "https://github.com/afilini/libportal-react-native#readme",
+  "homepage": "https://github.com/TwentyTwoHW/portal-software#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },

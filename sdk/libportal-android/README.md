@@ -9,7 +9,7 @@ repositories {
 }
 
 dependencies { 
-    implementation("xyz.twenty_two:libportal-android:<version>")
+    implementation("xyz.twenty-two:libportal-android:<version>")
 }
 ```
 
@@ -23,7 +23,8 @@ repositories {
 }
 
 dependencies { 
-    implementation("xyz.twenty_two:libportal-android:<version-SNAPSHOT>")
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("xyz.twenty-two:libportal-android:<version-SNAPSHOT>")
 }
 ```
 
