@@ -24,6 +24,10 @@ dummy-uniffi = { path = "../dummy-uniffi" }
 android_logger = { version = "0.13.3", optional = true }
 env_logger = { version = "0.10", optional = true }
 
+wasm-bindgen = { version = "=0.2.91", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+
 model = { path = "../model" }
 
 [features]
@@ -33,6 +37,7 @@ cli-pcsc = ["pcsc", "cli-common"]
 bindings = ["uniffi", "uniffi/cli", "debug"] # Binings needs the debug port enabled because the method cannot be conditionally removed under uniffi
 android = ["android_logger"]
 ios = []
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "getrandom"]
 debug = ["model/emulator"]
 
 [[bin]]

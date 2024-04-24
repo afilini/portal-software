@@ -24,7 +24,7 @@
         rustVersion = "1.76.0";
         getRust =
           # fullAndroid implies withAndroid
-          { fullAndroid ? false, withAndroid ? fullAndroid, withIos ? false, withEmbedded ? false }:
+          { fullAndroid ? false, withAndroid ? fullAndroid, withIos ? false, withEmbedded ? false, withWasm ? false }:
 
           (pkgs.rust-bin.stable.${rustVersion}.default.override {
             extensions = [
@@ -32,6 +32,7 @@
             ];
             targets = []
                         ++ pkgs.lib.optionals withEmbedded ["thumbv7em-none-eabihf"]
+                        ++ pkgs.lib.optionals withWasm ["wasm32-unknown-unknown"]
                         ++ pkgs.lib.optionals withAndroid ["x86_64-linux-android" "aarch64-linux-android"]
                         ++ pkgs.lib.optionals fullAndroid ["i686-linux-android" "armv7-linux-androideabi"]
                         ++ pkgs.lib.optionals withIos [ "aarch64-apple-ios-sim" "x86_64-apple-ios" "aarch64-apple-ios" ];
@@ -76,6 +77,7 @@
 
         defaultDeps = with pkgs; [ cmake SDL2 fltk pango rust-analyzer pkg-config libusb ];
         embeddedDeps = with pkgs; [ probe-rs gcc-arm-embedded qemu gdb openocd clang (getRust { withEmbedded = true; }) ];
+        wasmDeps = with pkgs; [ wasm-bindgen-cli clang (getRust { withWasm = true; }) ];
         androidDeps = with pkgs; [ cargo-ndk jdk gnupg (getRust { fullAndroid = true; }) ];
         iosDeps = with pkgs; [ (getRust { withIos = true; }) ];
       in
@@ -83,6 +85,14 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = defaultDeps ++ [ rust ];
+        };
+        devShells.wasm = pkgs.mkShell {
+          buildInputs = defaultDeps ++ wasmDeps ++ [ rust ];
+
+          shellHook = ''
+            export CC_wasm32_unknown_unknown="clang"
+            export CFLAGS_wasm32_unknown_unknown="-I${pkgs.clang}/resource-root/include -fno-stack-protector"
+          '';
         };
         devShells.embedded = pkgs.mkShell {
           buildInputs = defaultDeps ++ embeddedDeps ++ [ packages.hal ];

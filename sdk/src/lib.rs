@@ -1,22 +1,23 @@
 // Portal Hardware Wallet firmware and supporting software libraries
-// 
+//
 // Copyright (C) 2024 Alekos Filini
-// 
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
+#[allow(unused_imports)]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,9 @@ use async_std::sync::Mutex;
 
 use futures::prelude::*;
 use futures::stream::Peekable;
+
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::*;
 
 use inner_logic::FutureError;
 use model::{InitializationStatus, NumWordsMnemonic, Reply, Request};
@@ -47,10 +51,11 @@ const FLASH_BASE: u32 = 0x0800_0000;
 const FLASH_SIZE: u32 = 510 * 2048;
 const FLASH_END: u32 = FLASH_BASE + FLASH_SIZE;
 
-#[cfg(feature = "bindings")]
+#[cfg(not(feature = "wasm"))]
 pub use model::bitcoin::{Address, Network};
 
 #[cfg_attr(feature = "bindings", derive(uniffi::Object))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct PortalSdk {
     manager: Mutex<Option<InnerManager>>,
     requests: RequestChannels,
@@ -63,6 +68,7 @@ pub struct PortalSdk {
 
 #[cfg(feature = "debug")]
 #[cfg_attr(feature = "bindings", derive(uniffi::Object))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum DebugMessage {
     Out(Request),
     In(Reply),
@@ -114,6 +120,7 @@ macro_rules! send_with_retry {
 }
 
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct NfcOut {
     pub msg_index: u64,
     pub data: Vec<u8>,
@@ -121,12 +128,13 @@ pub struct NfcOut {
 
 // Required because we always have `uniffi::constructor` on `PortalSdk::new()`
 #[cfg(not(feature = "bindings"))]
+#[allow(unused_imports)]
 use dummy_uniffi as uniffi;
 
 #[cfg_attr(feature = "bindings", uniffi::export)]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl PortalSdk {
-    #[uniffi::constructor]
-    pub fn new(use_fast_ops: bool) -> Arc<Self> {
+    fn inner_constructor(use_fast_ops: bool) -> Self {
         let (manager, requests, nfc, stop, _debug_channel) = InnerManager::new(use_fast_ops);
 
         #[cfg(feature = "android")]
@@ -136,7 +144,7 @@ impl PortalSdk {
                 .with_max_level(log::LevelFilter::Info),
         );
 
-        Arc::new(PortalSdk {
+        PortalSdk {
             requests,
             nfc,
             manager: Mutex::new(Some(manager)),
@@ -144,12 +152,27 @@ impl PortalSdk {
 
             #[cfg(feature = "debug")]
             debug_channel: _debug_channel,
-        })
+        }
+    }
+
+    #[cfg(feature = "wasm")]
+    #[wasm_bindgen(constructor)]
+    pub fn wasm_constructor(use_fast_ops: bool) -> Self {
+        Self::inner_constructor(use_fast_ops)
+    }
+
+    #[uniffi::constructor]
+    #[cfg(not(feature = "wasm"))]
+    pub fn new(use_fast_ops: bool) -> Arc<Self> {
+        Arc::new(Self::inner_constructor(use_fast_ops))
     }
 
     pub async fn poll(&self) -> Result<NfcOut, SdkError> {
         if let Some(manager) = self.manager.lock().await.take() {
+            #[cfg(not(feature = "wasm"))]
             async_std::task::spawn(async move { manager.background_task().await });
+            #[cfg(feature = "wasm")]
+            wasm_bindgen_futures::spawn_local(async move { manager.background_task().await });
         }
 
         let mut lock = self.nfc.i.lock().await;
@@ -184,7 +207,7 @@ impl PortalSdk {
                 initialized: true,
                 unverified: None,
                 unlocked,
-                network: Some(network),
+                network: Some(network.into()),
             }),
             InitializationStatus::Uninitialized => Ok(CardStatus {
                 initialized: false,
@@ -196,7 +219,7 @@ impl PortalSdk {
                 initialized: false,
                 unverified: Some(with_code),
                 unlocked: true,
-                network: Some(network),
+                network: Some(network.into()),
             }),
         }
     }
@@ -204,9 +227,13 @@ impl PortalSdk {
     pub async fn generate_mnemonic(
         &self,
         num_words: GenerateMnemonicWords,
-        network: model::bitcoin::Network,
+        network: Network,
         password: Option<String>,
     ) -> Result<(), SdkError> {
+        #[cfg(feature = "wasm")]
+        let network =
+            std::convert::TryInto::try_into(network).map_err(|_| SdkError::DeserializationError)?;
+
         let num_words = match num_words {
             GenerateMnemonicWords::Words12 => NumWordsMnemonic::Words12,
             GenerateMnemonicWords::Words24 => NumWordsMnemonic::Words24,
@@ -219,9 +246,13 @@ impl PortalSdk {
     pub async fn restore_mnemonic(
         &self,
         mnemonic: String,
-        network: model::bitcoin::Network,
+        network: Network,
         password: Option<String>,
     ) -> Result<(), SdkError> {
+        #[cfg(feature = "wasm")]
+        let network =
+            std::convert::TryInto::try_into(network).map_err(|_| SdkError::DeserializationError)?;
+
         send_with_retry!(self.requests, Request::SetMnemonic { mnemonic: mnemonic.clone(), network, password: password.clone() }, Ok(Reply::Ok) => break Ok(()))?;
         Ok(())
     }
@@ -236,12 +267,12 @@ impl PortalSdk {
         Ok(())
     }
 
-    pub async fn display_address(&self, index: u32) -> Result<model::bitcoin::Address, SdkError> {
+    pub async fn display_address(&self, index: u32) -> Result<Address, SdkError> {
         let address = send_with_retry!(self.requests, Request::DisplayAddress(index), Ok(Reply::Address(s)) => break Ok(s))?;
-        let address = address
+        let address: model::bitcoin::Address = address
             .parse()
             .map_err(|_| SdkError::DeserializationError)?;
-        Ok(address)
+        Ok(address.into())
     }
 
     pub async fn sign_psbt(&self, psbt: String) -> Result<String, SdkError> {
@@ -472,15 +503,17 @@ impl InnerManager {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct CardStatus {
     pub initialized: bool,
     pub unverified: Option<bool>,
     pub unlocked: bool,
-    pub network: Option<model::bitcoin::Network>,
+    pub network: Option<Network>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct Descriptors {
     pub external: String,
     pub internal: Option<String>,
@@ -488,6 +521,7 @@ pub struct Descriptors {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum GenerateMnemonicWords {
     Words12,
     Words24,
@@ -495,6 +529,7 @@ pub enum GenerateMnemonicWords {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Error))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum SdkError {
     ChannelError,
     CommunicationError,
@@ -576,3 +611,42 @@ mod ffi {
 
 #[cfg(feature = "bindings")]
 uniffi::setup_scaffolding!();
+
+#[cfg(feature = "wasm")]
+#[allow(dead_code)]
+mod wasm {
+    use super::*;
+
+    macro_rules! custom_wrapper_type {
+        ($t:ident, $orig:ty) => {
+            #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+            #[wasm_bindgen(getter_with_clone)]
+            pub struct $t {
+                pub inner: String,
+            }
+
+            impl core::convert::TryInto<$orig> for $t {
+                type Error = String;
+
+                fn try_into(self) -> Result<$orig, Self::Error> {
+                    use core::str::FromStr;
+
+                    <$orig>::from_str(&self.inner).map_err(|e| e.to_string())
+                }
+            }
+            impl From<$orig> for $t {
+                fn from(orig: $orig) -> Self {
+                    $t {
+                        inner: orig.to_string(),
+                    }
+                }
+            }
+        };
+    }
+
+    custom_wrapper_type!(Network, model::bitcoin::Network);
+    custom_wrapper_type!(Address, model::bitcoin::Address);
+}
+
+#[cfg(feature = "wasm")]
+pub use wasm::*;
