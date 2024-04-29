@@ -81,7 +81,8 @@ jobs:
           ./target
           ./firmware/target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    - run: nix develop .#embedded --command bash -c "cd firmware && cargo build --no-default-features --features ${{ matrix.target }} --release"
+    - run: nix develop .#embedded-reproducible --command bash -c "cd firmware && cargo build --no-default-features --features ${{ matrix.target }} --release"
+    - run: sha256sum ./firmware/target/thumbv7em-none-eabihf/release/firmware
     - uses: actions/upload-artifact@v2
       with:
         name: firmware-${{ matrix.target }}

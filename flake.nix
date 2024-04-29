@@ -75,7 +75,7 @@
         };
 
         defaultDeps = with pkgs; [ cmake SDL2 fltk pango rust-analyzer pkg-config libusb ];
-        embeddedDeps = with pkgs; [ probe-rs gcc-arm-embedded qemu gdb openocd clang (getRust { withEmbedded = true; }) ];
+        embeddedDeps = with pkgs; [ probe-rs gcc-arm-embedded qemu gdb openocd clang_17 (getRust { withEmbedded = true; }) ];
         androidDeps = with pkgs; [ cargo-ndk jdk gnupg (getRust { fullAndroid = true; }) ];
         iosDeps = with pkgs; [ (getRust { withIos = true; }) ];
       in
@@ -88,6 +88,19 @@
           buildInputs = defaultDeps ++ embeddedDeps ++ [ packages.hal ];
 
           CC_thumbv7em_none_eabihf = "${pkgs.gcc-arm-embedded}/bin/arm-none-eabi-gcc";
+        };
+        devShells.embedded-reproducible = pkgs.mkShell {
+          buildInputs = defaultDeps ++ embeddedDeps;
+
+
+          shellHook = ''
+            export MAIN_DIR=$PWD
+
+            export CRATE_CC_NO_DEFAULTS="true"
+            export CC_thumbv7em_none_eabihf="clang-17"
+            export CFLAGS_thumbv7em_none_eabihf="-fno-PIC -fno-stack-protector -v -frandom-seed=22 -I${pkgs.clang_17}/resource-root/include/ -I${pkgs.gcc-arm-embedded}/arm-none-eabi/include -target thumbv7em-none-eabihf -ffile-prefix-map=$HOME/.cargo="
+            export RUSTFLAGS="-Clink-arg=-Tlink.x --remap-path-prefix $HOME/.cargo= --remap-path-prefix $MAIN_DIR/firmware=firmware --remap-path-prefix $MAIN_DIR/model=model --remap-path-prefix $MAIN_DIR/gui=gui";
+          '';
         };
         devShells.android = pkgs.mkShell rec {
           buildInputs = defaultDeps ++ androidDeps;
