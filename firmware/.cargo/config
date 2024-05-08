@@ -15,6 +15,7 @@ runner = "probe-run --chip STM32L476RG"
 
 [target.thumbv7em-none-eabihf]
 runner = "qemu-system-arm -display none -monitor none -gdb tcp::3333 -cpu cortex-m4 -machine netduinoplus2 -semihosting-config enable=on,target=auto -chardev socket,path=serial1.socket,server=on,wait=off,id=serial1 -serial chardev:serial1 -kernel"
+linker = "lld"
 
 [alias]
 run-wait-gdb = "run -- -S"

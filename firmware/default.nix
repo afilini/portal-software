@@ -25,6 +25,8 @@ let
       pkgs.git
       pkgs.cmake
       pkgs.gcc-arm-embedded
+      pkgs.clang
+      pkgs.lld
     ];
 
     cargoVendorDir = craneLib.vendorMultipleCargoDeps {
@@ -43,8 +45,9 @@ let
     '';
     # strictDeps = true;
 
-    cargoExtraArgs = "-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort --target thumbv7em-none-eabihf --no-default-features --features=${variant}";
-    CC_thumbv7em_none_eabihf = "arm-none-eabi-gcc";
+    cargoExtraArgs = "-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort --target thumbv7em-none-eabihf --no-default-features --features=${variant} -v";
+    CC_thumbv7em_none_eabihf = "clang";
+    CFLAGS_thumbv7em_none_eabihf = "-fembed-bitcode -flto=thin -fno-data-sections -fno-function-sections -fno-PIC -fno-stack-protector -target thumbv7em-none-eabihf";
   };
   
   # Don't actually build the dummy lib beacuse we can't link without a custom linker script
