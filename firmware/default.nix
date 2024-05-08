@@ -46,8 +46,8 @@ let
     # strictDeps = true;
 
     cargoExtraArgs = "-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort --target thumbv7em-none-eabihf --no-default-features --features=${variant} -v";
-    CC_thumbv7em_none_eabihf = "clang";
-    CFLAGS_thumbv7em_none_eabihf = "-fembed-bitcode -flto=thin -fno-data-sections -fno-function-sections -fno-PIC -fno-stack-protector -target thumbv7em-none-eabihf";
+    CC_thumbv7em_none_eabihf = "clang-17";
+    CFLAGS_thumbv7em_none_eabihf = "-fembed-bitcode -flto=thin -fno-data-sections -fno-function-sections -fno-PIC -fno-stack-protector -target thumbv7em-none-eabihf -I${pkgs.clang_17}/resource-root/include/ -I${pkgs.gcc-arm-embedded}/arm-none-eabi/include";
   };
   
   # Don't actually build the dummy lib beacuse we can't link without a custom linker script
