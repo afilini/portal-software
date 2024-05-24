@@ -160,7 +160,7 @@
         };
 
         packages.docker.emulatorImage = pkgs.callPackage ./docker/emulator.nix { inherit pkgs packages; };
-        packages.docker.devEnvironment = pkgs.callPackage ./docker/embedded-dev.nix { inherit pkgs packages getRust; };
+        packages.docker.devEnvironment = pkgs.callPackage ./docker/embedded-dev.nix { inherit pkgs packages devShells getRust; };
       }
     );
 }
