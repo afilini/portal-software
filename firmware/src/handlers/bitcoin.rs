@@ -191,19 +191,26 @@ pub async fn handle_sign_request(
 
     let diff = CurrentSignatures::diff(&current_sigs, psbt);
 
+    use bdk::bitcoin::consensus::encode::{serialize, Encodable};
+
     #[rustfmt::skip]
     let mut empty_psbt = alloc::vec![
         0x70, 0x73, 0x62, 0x74, 0xFF, // PSBT magic
-            0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, // Empty raw tx
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
-            0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00 // End global map
-    ];
+        0x01, 0x00]; // Unsigned tx
 
-    use bdk::bitcoin::consensus::encode::Encodable;
+    let empty_tx = ::bitcoin::Transaction {
+        version: 1,
+        input: alloc::vec![::bitcoin::TxIn::default(); diff.len()],
+        output: alloc::vec![],
+        lock_time: ::bitcoin::PackedLockTime(0),
+    };
+    let empty_tx = serialize(&empty_tx);
+    // We re-encode to prefix with the length
+    empty_tx
+        .consensus_encode(&mut empty_psbt)
+        .expect("Write succeeds");
+    empty_psbt.push(0x00); // close global map
+
     for input in &diff {
         input
             .consensus_encode(&mut empty_psbt)
