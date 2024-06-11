@@ -17,6 +17,7 @@
 
 use core::fmt;
 
+use model::SeedBackupMethod;
 use serde::{Deserialize, Serialize};
 
 use embedded_graphics::pixelcolor::Gray8;
@@ -61,6 +62,7 @@ pub enum NfcAction {
         model::NumWordsMnemonic,
         model::bitcoin::Network,
         Option<String>,
+        Option<SeedBackupMethod>,
     ),
     RestoreMnemonic(String, model::bitcoin::Network, Option<String>),
     RequestDescriptors,

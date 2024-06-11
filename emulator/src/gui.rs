@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 
 use portal::{GenerateMnemonicWords, PortalSdk};
 
-use model::FwUpdateHeader;
+use model::{FwUpdateHeader, SeedBackupMethod};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub enum EmulatorMessage {
@@ -58,6 +58,10 @@ pub fn init_gui(
     emulator_gui.num_words.add_choice("12 Words");
     emulator_gui.num_words.add_choice("24 Words");
     emulator_gui.num_words.set_value(0);
+
+    emulator_gui.backup_method.add_choice("Display");
+    emulator_gui.backup_method.add_choice("EncryptedFile");
+    emulator_gui.backup_method.set_value(0);
 
     // TODO: assert fb size is 511x255
     emulator_gui.display.draw(move |i| {
@@ -115,28 +119,53 @@ pub fn init_gui(
         let password = app::widget_from_id::<Input>("generate_mnemonic_password")
             .unwrap()
             .value();
+        let backup = match app::widget_from_id::<Choice>("backup_method")
+            .unwrap()
+            .value()
+        {
+            0 => SeedBackupMethod::Display,
+            1 => SeedBackupMethod::EncryptedFile,
+            _ => unimplemented!(),
+        };
         let sdk_cloned = sdk_cloned.clone();
         let log_cloned = log_cloned.clone();
         tokio::spawn(async move {
             log_cloned
                 .send(format!(
-                    "> GenerateMnemonic({:?}, {:?})",
-                    num_words, password
+                    "> GenerateMnemonic({:?}, {:?}, {:?})",
+                    num_words, password, backup
                 ))
                 .unwrap();
-            match sdk_cloned
-                .generate_mnemonic(
-                    num_words,
-                    model::bitcoin::Network::Signet,
-                    if password.is_empty() {
-                        None
-                    } else {
-                        Some(password)
-                    },
-                )
-                .await
-            {
-                Ok(v) => log_cloned.send("< ".into()).unwrap(),
+
+            let result = match backup {
+                SeedBackupMethod::Display => sdk_cloned
+                    .generate_mnemonic(
+                        num_words,
+                        model::bitcoin::Network::Signet,
+                        if password.is_empty() {
+                            None
+                        } else {
+                            Some(password)
+                        },
+                    )
+                    .await
+                    .map(|_| "Ok".to_string()),
+                SeedBackupMethod::EncryptedFile => sdk_cloned
+                    .generate_mnemonic_encrypted_backup(
+                        num_words,
+                        model::bitcoin::Network::Signet,
+                        if password.is_empty() {
+                            None
+                        } else {
+                            Some(password)
+                        },
+                    )
+                    .await
+                    .map(|seed| format!("{:02X?}", seed)),
+            };
+
+            match result {
+                Ok(v) => log_cloned.send(format!("< {}", v)).unwrap(),
                 Err(e) => log::warn!("Generate mnemonic err: {:?}", e),
             }
         });

@@ -699,19 +699,25 @@ pub struct Password {
     pub iterations: usize,
 }
 
+fn iter_hash_password(init: sha256::HashEngine) -> [u8; 32] {
+    let mut hash = sha256::Hash::from_engine(init);
+    for _ in 0..DEFAULT_PASSWORD_ITERATIONS {
+        hash = sha256::Hash::hash(hash.as_ref());
+    }
+
+    hash.to_byte_array()
+}
+
 impl Password {
     pub fn new(password: &str, salt: [u8; 8]) -> Self {
         let mut hash = sha256::HashEngine::default();
         hash.input(password.as_bytes());
         hash.input(&salt);
 
-        let mut hash = sha256::Hash::from_engine(hash);
-        for _ in 0..DEFAULT_PASSWORD_ITERATIONS {
-            hash = sha256::Hash::hash(hash.as_ref());
-        }
+        let hash = iter_hash_password(hash);
 
         Password {
-            hash: hash.to_byte_array(),
+            hash,
             salt,
             iterations: DEFAULT_PASSWORD_ITERATIONS,
         }
@@ -949,6 +955,10 @@ pub enum Request {
         network: bitcoin::Network,
         #[cbor(n(2))]
         password: Option<String>,
+
+        // Since v0.3.0
+        #[cbor(n(3))]
+        backup: Option<SeedBackupMethod>,
     },
     #[cbor(n(2))]
     SetMnemonic {
@@ -1059,6 +1069,11 @@ pub enum Reply {
         #[cbor(n(1))]
         bsms: BsmsRound1,
     },
+
+    // Since v0.3.0
+    #[cbor(n(15))]
+    #[cfg_attr(feature = "emulator", serde(with = "serde_bytevec"))]
+    EncryptedSeed(#[cbor(n(0))] ByteVec),
 }
 
 #[derive(Clone, Debug, Encode, Decode)]
@@ -1114,6 +1129,55 @@ impl BsmsRound1 {
 pub struct BsmsRound2 {
     #[cbor(n(0))]
     pub first_address: String,
+}
+
+#[derive(Clone, Copy, Debug, Encode, Decode)]
+#[cfg_attr(feature = "emulator", derive(serde::Serialize, serde::Deserialize))]
+pub enum SeedBackupMethod {
+    #[cbor(n(0))]
+    Display,
+    #[cbor(n(1))]
+    EncryptedFile,
+}
+
+#[derive(Clone, Debug, Encode, Decode)]
+#[cfg_attr(feature = "emulator", derive(serde::Serialize, serde::Deserialize))]
+pub struct EncryptedBackupData {
+    #[cbor(n(0))]
+    pub mnemonic: String,
+    #[cbor(n(1))]
+    #[cbor(with = "cbor_bitcoin_network")]
+    pub network: bitcoin::Network,
+}
+
+impl EncryptedBackupData {
+    fn get_key(key: &str) -> [u8; 32] {
+        let mut hash = sha256::HashEngine::default();
+        hash.input(key.as_bytes());
+        iter_hash_password(hash)
+    }
+
+    pub fn encrypt(self, key: &str) -> Vec<u8> {
+        let serialized = minicbor::to_vec(&self).expect("always succeed");
+
+        let key = Self::get_key(key);
+        let nonce = Nonce::default();
+        Aes256Gcm::new_from_slice(&key)
+            .expect("Correct length")
+            .encrypt(&nonce, serialized.as_slice())
+            .expect("Encryption works")
+    }
+
+    pub fn decrypt(data: &[u8], key: &str) -> Result<Self, ()> {
+        let key = Self::get_key(key);
+        let nonce = Nonce::default();
+        Aes256Gcm::new_from_slice(&key)
+            .expect("Correct length")
+            .decrypt(&nonce, data)
+            .map_err(|_| ())
+            .and_then(|data| minicbor::decode::<Self>(&data).map_err(|_| ()))
+            .map(|config| config)
+    }
 }
 
 #[cfg(feature = "emulator")]
@@ -1211,6 +1275,31 @@ mod tests {
     use super::*;
 
     // Model tests
+
+    #[test]
+    fn test_encrypted_backup_roundtrip() {
+        let data = EncryptedBackupData {
+            mnemonic: "test mnemonic string".to_string(),
+            network: bitcoin::Network::Bitcoin,
+        };
+        let key = "supersecurepassword";
+
+        let encrypted = data.clone().encrypt(&key);
+        let decrypted = EncryptedBackupData::decrypt(&encrypted, &key).unwrap();
+
+        let EncryptedBackupData {
+            mnemonic: m1,
+            network: n1,
+        } = &data;
+        let EncryptedBackupData {
+            mnemonic: m2,
+            network: n2,
+        } = &decrypted;
+        assert_eq!(m1, m2);
+        assert_eq!(n1, n2);
+
+        assert!(EncryptedBackupData::decrypt(&encrypted, "wrongpassword").is_err());
+    }
 
     // Message tests
 

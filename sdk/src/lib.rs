@@ -33,7 +33,7 @@ use miniscript::TranslatePk;
 use model::bitcoin::bip32;
 use model::{
     BsmsRound2, ExtendedKey, InitializationStatus, NumWordsMnemonic, Reply, Request, ScriptType,
-    SetDescriptorVariant,
+    SeedBackupMethod, SetDescriptorVariant,
 };
 
 mod inner_logic;
@@ -229,6 +229,21 @@ impl PortalSdk {
         }
     }
 
+    pub async fn generate_mnemonic_encrypted_backup(
+        &self,
+        num_words: GenerateMnemonicWords,
+        network: model::bitcoin::Network,
+        password: Option<String>,
+    ) -> Result<Vec<u8>, SdkError> {
+        let num_words = match num_words {
+            GenerateMnemonicWords::Words12 => NumWordsMnemonic::Words12,
+            GenerateMnemonicWords::Words24 => NumWordsMnemonic::Words24,
+        };
+
+        let encrypted_backup = send_with_retry!(self.requests, Request::GenerateMnemonic { num_words, network, password: password.clone(), backup: Some(SeedBackupMethod::EncryptedFile) }, Ok(Reply::EncryptedSeed(seed)) => break Ok(seed))?;
+        Ok(encrypted_backup.into())
+    }
+
     pub async fn generate_mnemonic(
         &self,
         num_words: GenerateMnemonicWords,
@@ -240,7 +255,7 @@ impl PortalSdk {
             GenerateMnemonicWords::Words24 => NumWordsMnemonic::Words24,
         };
 
-        send_with_retry!(self.requests, Request::GenerateMnemonic { num_words, network, password: password.clone() }, Ok(Reply::Ok) => break Ok(()))?;
+        send_with_retry!(self.requests, Request::GenerateMnemonic { num_words, network, password: password.clone(), backup: None }, Ok(Reply::Ok) => break Ok(()))?;
         Ok(())
     }
 

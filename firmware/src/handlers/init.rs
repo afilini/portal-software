@@ -19,12 +19,11 @@ use core::str::FromStr;
 
 use futures::prelude::*;
 
-use rand::RngCore;
+use rand::{RngCore, Rng};
 
-use gui::{ConfirmPairCodePage, SingleLineTextPage};
+use gui::{ConfirmEncryptionKeyPage, ConfirmPairCodePage, SingleLineTextPage};
 use model::{
-    Entropy, ExtendedKey, InitializedConfig, MultisigKey, ScriptType, UnlockedConfig,
-    UnverifiedConfig, WalletDescriptor,
+    EncryptedBackupData, Entropy, ExtendedKey, InitializedConfig, MultisigKey, ScriptType, UnlockedConfig, UnverifiedConfig, WalletDescriptor
 };
 
 use bdk_wallet::bitcoin::bip32;
@@ -36,7 +35,7 @@ use bdk_wallet::miniscript;
 use bdk_wallet::miniscript::descriptor::{DescriptorXKey, KeyMap, Wildcard};
 
 use gui::{GeneratingMnemonicPage, LoadingPage, MnemonicPage, Page, WelcomePage};
-use model::{Config, DeviceInfo};
+use model::{Config, DeviceInfo, SeedBackupMethod};
 
 use super::*;
 use crate::config;
@@ -374,11 +373,13 @@ pub async fn handle_init(
                 num_words,
                 network,
                 password,
+                backup,
             }) => {
                 break Ok(CurrentState::GenerateSeed {
                     num_words,
                     network,
                     password,
+                    backup: backup.unwrap_or(SeedBackupMethod::Display)
                 });
             }
             Some(model::Request::SetMnemonic {
@@ -539,6 +540,70 @@ pub async fn display_mnemonic(
     })
 }
 
+pub async fn display_encryption_key(
+    config: UnverifiedConfig,
+    mut events: impl Stream<Item = Event> + Unpin,
+    peripherals: &mut HandlerPeripherals,
+) -> Result<CurrentState, Error> {
+    peripherals.tsc_enabled.enable();
+
+    let mnemonic = Mnemonic::from_entropy(&config.entropy.bytes).map_err(map_err_config)?;
+    let mnemonic = mnemonic.word_iter().collect::<alloc::vec::Vec<_>>().join(" ");
+
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+        abcdefghijklmnopqrstuvwxyz\
+        0123456789)(*%$#!";
+    const PASSWORD_LEN: usize = 14;
+
+    let encryption_key: String = (0..PASSWORD_LEN)
+        .map(|_| {
+            let idx = peripherals.rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+
+    let mut page = ConfirmEncryptionKeyPage::new(&encryption_key);
+    page.init_display(&mut peripherals.display)?;
+    page.draw_to(&mut peripherals.display)?;
+    peripherals.display.flush()?;
+
+    manage_confirmation_loop(&mut events, peripherals, &mut page).await?;
+
+    if let Some(pair_code) = &config.pair_code {
+        let mut page = ConfirmPairCodePage::new(pair_code);
+        page.init_display(&mut peripherals.display)?;
+        page.draw_to(&mut peripherals.display)?;
+        peripherals.display.flush()?;
+
+        manage_confirmation_loop(&mut events, peripherals, &mut page).await?;
+    }
+
+    let page = LoadingPage::new();
+    page.init_display(&mut peripherals.display)?;
+    page.draw_to(&mut peripherals.display)?;
+    peripherals.display.flush()?;
+
+    let mut salt = [0; 8];
+    peripherals.rng.fill_bytes(&mut salt);
+
+    let backup = EncryptedBackupData {
+        mnemonic,
+        network: config.network,
+    };
+    let backup = backup.encrypt(&encryption_key);
+
+    peripherals.nfc.send(model::Reply::EncryptedSeed(backup.into())).await.unwrap();
+    peripherals.nfc_finished.recv().await.unwrap();
+
+    let network = config.network;
+    let (initialized, unlocked, xprv) = config.upgrade(salt);
+    config::write_config(&mut peripherals.flash, &Config::Initialized(initialized))?;
+
+    Ok(CurrentState::Idle {
+        wallet: Rc::new(make_wallet_from_xprv(xprv, network, unlocked)?),
+    })
+}
+
 async fn save_unverified_config(
     unverified_config: UnverifiedConfig,
     peripherals: &mut HandlerPeripherals,
@@ -557,6 +622,7 @@ pub async fn handle_generate_seed(
     num_words: model::NumWordsMnemonic,
     network: Network,
     password: Option<String>,
+    backup: SeedBackupMethod,
     events: impl Stream<Item = Event> + Unpin,
     peripherals: &mut HandlerPeripherals,
 ) -> Result<CurrentState, Error> {
@@ -584,7 +650,11 @@ pub async fn handle_generate_seed(
         page: 0,
     };
     let unverified_config = save_unverified_config(unverified_config, peripherals).await?;
-    display_mnemonic(unverified_config, events, peripherals).await
+
+    match backup {
+        SeedBackupMethod::Display => display_mnemonic(unverified_config, events, peripherals).await,
+        SeedBackupMethod::EncryptedFile => display_encryption_key(unverified_config, events, peripherals).await,
+    }
 }
 
 pub async fn handle_import_seed(

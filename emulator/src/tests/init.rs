@@ -36,6 +36,7 @@ async fn test_generate_mnemonic_12words(mut tester: Tester) -> Result<(), crate:
             model::NumWordsMnemonic::Words12,
             model::bitcoin::Network::Signet,
             None,
+            None,
         ))
         .await?;
     tester.display_assertion("iVBORw0KGgoAAAANSUhEUgAAAIAAAABACAAAAAD3vSCjAAABbUlEQVR4nO2YURLDIAhE5f6H3nZSQTAaNbbNz/YjGW2AN4iyiaSHfwQgAAH2AHBljynnBCjPQJYiH7bvGDh85LG/yyIAlpOh0ZFjqYc8RloCgKxnoAQ2gGr+Z0tQB0bqAP0PQJrzNwDmMHSNWyA6v1oDWtZpkuCIEtfeVf+NXXBnM7IXEIAAN5sIAXrteOSoaIBw+tWaII7dKTlqx6NTsNEBxd9bGgEeeLwEcwDeeTV/aslLAKO1hBlohqXfmgPAZbHJdBcywE4GmupoLAukit/n6NfAWQuoShK/RNt6oL8LgkJpaYSJXfB9PTApy37YCzDln92QAAQgwPMAIMBpLCZ7nLRzQkTcFwmvhaybInbFbPG5JHN4BaAX5Slkmc6sBPUjOQ7yw8WiOL0GSI44AHzQ81t/D0Apkn4qKBb6B9J2BiBDAEgAyCmZysAegNnuAZjkRF2EMWIyZdgsQntDqZzyHGAvIAABCECA8HsBUJhXRmrXkc8AAAAASUVORK5CYII=", None).await?;
@@ -318,6 +319,7 @@ async fn test_reset_during_generate_mnemonic(mut tester: Tester) -> Result<(), c
         .nfc(NfcAction::GenerateMnemonic(
             model::NumWordsMnemonic::Words12,
             model::bitcoin::Network::Signet,
+            None,
             None,
         ))
         .await?;

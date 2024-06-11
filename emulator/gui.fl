@@ -22,16 +22,20 @@ class Emulator {open
           code0 {inner_pack_1.set_spacing(5);}
         } {
           Fl_Choice num_words {open
-            xywh {35 305 150 35} down_box BORDER_BOX textfont 4
+            xywh {35 305 100 35} down_box BORDER_BOX textfont 4
             code0 {let num_words = num_words.with_id("num_words");}
           } {}
           Fl_Input generate_mnemonic_password {
-            xywh {35 430 180 35} textfont 4
+            xywh {35 430 160 35} textfont 4
             code0 { let generate_mnemonic_password = generate_mnemonic_password.with_id("generate_mnemonic_password"); }
           }
+          Fl_Choice backup_method {open
+            xywh {35 305 100 35} down_box BORDER_BOX textfont 4
+            code0 {let backup_method = backup_method.with_id("backup_method");}
+          } {}
           Fl_Button generate_mnemonic_btn {
-            label GenerateMnemonic
-            xywh {285 305 176 35}
+            label GenerateSeed
+            xywh {285 305 136 35}
           }
         }
         Fl_Pack inner_pack_4 {open
@@ -48,7 +52,7 @@ class Emulator {open
           }
           Fl_Button restore_mnemonic_btn {
             label Restore
-            xywh {300 430 100 35}
+            xywh {300 430 95 35}
           }
         }
         Fl_Pack inner_pack_7 {open

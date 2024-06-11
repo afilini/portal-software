@@ -620,6 +620,22 @@ impl<'s, 'l> MainContent for TwoLinesText<'s, 'l> {
     }
 }
 
+pub struct ConfirmEncryptionKeyPage<'s>(ConfirmBarPage<'static, TwoLinesText<'static, 's>>);
+impl_wrapper_page!(
+    ConfirmEncryptionKeyPage<'s>,
+    ConfirmBarPage<'static, TwoLinesText<'static, 's>>
+);
+impl<'s> ConfirmEncryptionKeyPage<'s> {
+    pub fn new(pair_code: &'s str) -> Self {
+        ConfirmEncryptionKeyPage(ConfirmBarPage::new_default_bar(
+            100,
+            TwoLinesText::new("Backup Key", pair_code),
+            "HOLD BTN TO CONFIRM",
+            "KEEP HOLDING...",
+        ))
+    }
+}
+
 pub struct ConfirmPairCodePage<'s>(ConfirmBarPage<'static, TwoLinesText<'static, 's>>);
 impl_wrapper_page!(
     ConfirmPairCodePage<'s>,

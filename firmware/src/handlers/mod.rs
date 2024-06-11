@@ -26,7 +26,7 @@ use futures::prelude::*;
 
 use gui::{ConfirmBarPage, ErrorPage, MainContent, Page};
 use model::bitcoin::bip32;
-use model::{FwUpdateHeader, NumWordsMnemonic, Reply};
+use model::{FwUpdateHeader, NumWordsMnemonic, Reply, SeedBackupMethod};
 
 use crate::{checkpoint, hw, Error};
 
@@ -78,6 +78,7 @@ pub enum CurrentState {
         num_words: NumWordsMnemonic,
         network: bdk_wallet::bitcoin::Network,
         password: Option<String>,
+        backup: SeedBackupMethod,
     },
     /// Importing seed
     ImportSeed {
@@ -245,6 +246,7 @@ pub async fn dispatch_handler<'a>(
             num_words,
             network,
             password,
+            backup,
         } => {
             peripherals
                 .nfc
@@ -252,13 +254,7 @@ pub async fn dispatch_handler<'a>(
                 .await
                 .unwrap();
 
-            Box::pin(init::handle_generate_seed(
-                num_words,
-                network,
-                password,
-                events,
-                peripherals,
-            )) as Pin<Box<dyn Future<Output = Result<CurrentState, Error>>>>
+            Box::pin(init::handle_generate_seed(num_words, network, password, backup, events, peripherals)) as Pin<Box<dyn Future<Output = Result<CurrentState, Error>>>>
         }
         CurrentState::ImportSeed {
             mnemonic,

@@ -96,7 +96,7 @@ async fn run_script(
                     NfcAction::DisplayAddress(addr) => tokio::spawn(async move {
                         let _ = cloned_sdk.display_address(addr).await;
                     }),
-                    NfcAction::GenerateMnemonic(num_words, network, pair_code) => {
+                    NfcAction::GenerateMnemonic(num_words, network, pair_code, backup) => {
                         tokio::spawn(async move {
                             let num_words = match num_words {
                                 model::NumWordsMnemonic::Words12 => {
@@ -107,7 +107,7 @@ async fn run_script(
                                 }
                             };
                             let _ = cloned_sdk
-                                .generate_mnemonic(num_words, network, pair_code)
+                                .generate_mnemonic(num_words, network, pair_code, backup)
                                 .await;
                         })
                     }
