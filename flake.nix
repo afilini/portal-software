@@ -24,7 +24,7 @@
         rustVersion = "1.76.0";
         getRust =
           # fullAndroid implies withAndroid
-          { fullAndroid ? false, withAndroid ? fullAndroid, withIos ? false, withEmbedded ? false, nightly ? false }:
+          { fullAndroid ? false, withAndroid ? fullAndroid, withIos ? false, withEmbedded ? false, nightly ? false, withWasm ? false }:
           let
             rs = if nightly then pkgs.rust-bin.nightly."2024-01-31" else pkgs.rust-bin.stable.${rustVersion};
           in (rs.default.override {
@@ -33,6 +33,7 @@
             ];
             targets = []
                         ++ pkgs.lib.optionals withEmbedded ["thumbv7em-none-eabihf"]
+                        ++ pkgs.lib.optionals withWasm ["wasm32-unknown-unknown"]
                         ++ pkgs.lib.optionals withAndroid ["x86_64-linux-android" "aarch64-linux-android"]
                         ++ pkgs.lib.optionals fullAndroid ["i686-linux-android" "armv7-linux-androideabi"]
                         ++ pkgs.lib.optionals withIos [ "aarch64-apple-ios-sim" "x86_64-apple-ios" "aarch64-apple-ios" ];
@@ -74,9 +75,18 @@
           ndkVersion = "23.1.7779620";
           cmakeVersions = [ android.cmakeVersion ];
         };
+        customWasmLinker = pkgs.writeShellScriptBin "custom-wasm-linker" ''
+          args=()
+          for var; do
+              [[ $var != '--fatal-warnings' ]] && args+=("$var")
+          done
+
+          exec ${pkgs.lld}/bin/wasm-ld "''${args[@]}"
+        '';
 
         defaultDeps = with pkgs; [ cmake SDL2 fltk pango rust-analyzer pkg-config libusb ];
         embeddedDeps = with pkgs; [ probe-rs gcc-arm-embedded gdb openocd clang lld (getRust { withEmbedded = true; nightly = true; }) ];
+        wasmDeps = with pkgs; [ wasm-bindgen-cli clang wasm-pack customWasmLinker (getRust { withWasm = true; }) ];
         androidDeps = with pkgs; [ cargo-ndk jdk gnupg (getRust { fullAndroid = true; }) ];
         iosDeps = with pkgs; [ (getRust { withIos = true; }) ];
       in
@@ -85,6 +95,12 @@
         devShells.default = pkgs.mkShell {
           buildInputs = defaultDeps ++ [ rust ];
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+        };
+        devShells.wasm = pkgs.mkShell {
+          buildInputs = wasmDeps ++ [ rust ];
+          RUSTFLAGS = "-Clinker=custom-wasm-linker";
+          CC_wasm32_unknown_unknown="clang-18";
+          CFLAGS_wasm32_unknown_unknown="-I${pkgs.clang_18}/resource-root/include";
         };
         devShells.embedded = pkgs.mkShell {
           buildInputs = defaultDeps ++ embeddedDeps ++ [ packages.hal packages.qemuPortal ];

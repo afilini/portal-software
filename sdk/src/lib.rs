@@ -17,6 +17,7 @@
 
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
+#[allow(unused_imports)]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,7 +31,9 @@ use inner_logic::FutureError;
 
 use miniscript::TranslatePk;
 
-use model::bitcoin::bip32;
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::*;
+
 use model::{
     BsmsRound2, ExtendedKey, InitializationStatus, NumWordsMnemonic, Reply, Request, ScriptType,
     SetDescriptorVariant,
@@ -55,13 +58,14 @@ const FLASH_BASE: u32 = 0x0800_0000;
 const FLASH_SIZE: u32 = 510 * 2048;
 const FLASH_END: u32 = FLASH_BASE + FLASH_SIZE;
 
-#[cfg(feature = "bindings")]
+#[cfg(not(feature = "wasm"))]
 pub use model::bitcoin::{
-    bip32::{DerivationPath, Fingerprint},
+    bip32::{self, DerivationPath, Fingerprint},
     Address, Network,
 };
 
 #[cfg_attr(feature = "bindings", derive(uniffi::Object))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct PortalSdk {
     manager: Mutex<Option<InnerManager>>,
     requests: RequestChannels,
@@ -133,6 +137,7 @@ macro_rules! send_with_retry {
 }
 
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct NfcOut {
     pub msg_index: u64,
     pub data: Vec<u8>,
@@ -140,12 +145,13 @@ pub struct NfcOut {
 
 // Required because we always have `uniffi::constructor` on `PortalSdk::new()`
 #[cfg(not(feature = "bindings"))]
+#[allow(unused_imports)]
 use dummy_uniffi as uniffi;
 
 #[cfg_attr(feature = "bindings", uniffi::export)]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl PortalSdk {
-    #[uniffi::constructor]
-    pub fn new(use_fast_ops: bool) -> Arc<Self> {
+    fn inner_constructor(use_fast_ops: bool) -> Self {
         let (manager, requests, nfc, stop, _debug_channels) = InnerManager::new(use_fast_ops);
 
         #[cfg(feature = "android")]
@@ -155,7 +161,7 @@ impl PortalSdk {
                 .with_max_level(log::LevelFilter::Info),
         );
 
-        Arc::new(PortalSdk {
+        PortalSdk {
             requests,
             nfc,
             manager: Mutex::new(Some(manager)),
@@ -163,12 +169,26 @@ impl PortalSdk {
 
             #[cfg(feature = "debug")]
             debug_channels: _debug_channels,
-        })
+        }
+    }
+
+    #[wasm_bindgen(constructor)]
+    pub fn wasm_constructor(use_fast_ops: bool) -> Self {
+        Self::inner_constructor(use_fast_ops)
+    }
+
+    #[uniffi::constructor]
+    #[cfg(not(feature = "wasm"))]
+    pub fn new(use_fast_ops: bool) -> Arc<Self> {
+        Arc::new(Self::inner_constructor(use_fast_ops))
     }
 
     pub async fn poll(&self) -> Result<NfcOut, SdkError> {
         if let Some(manager) = self.manager.lock().await.take() {
+            #[cfg(not(feature = "wasm"))]
             async_std::task::spawn(async move { manager.background_task().await });
+            #[cfg(feature = "wasm")]
+            wasm_bindgen_futures::spawn_local(async move { manager.background_task().await });
         }
 
         let mut lock = self.nfc.i.lock().await;
@@ -208,7 +228,14 @@ impl PortalSdk {
                 unlocked,
                 network: Some(network),
                 version: device_info.firmware_version,
-                fingerprint: fingerprint.map(|bytes| bip32::Fingerprint::from(bytes)),
+                fingerprint: fingerprint.map(|bytes| {
+                    let fingerprint = model::bitcoin::bip32::Fingerprint::from(bytes);
+
+                    #[cfg(feature = "wasm")]
+                    let fingerprint = fingerprint.into();
+
+                    fingerprint
+                }),
             }),
             InitializationStatus::Uninitialized => Ok(CardStatus {
                 initialized: false,
@@ -232,9 +259,13 @@ impl PortalSdk {
     pub async fn generate_mnemonic(
         &self,
         num_words: GenerateMnemonicWords,
-        network: model::bitcoin::Network,
+        network: Network,
         password: Option<String>,
     ) -> Result<(), SdkError> {
+        #[cfg(feature = "wasm")]
+        let network =
+            std::convert::TryInto::try_into(network).map_err(|_| SdkError::DeserializationError)?;
+
         let num_words = match num_words {
             GenerateMnemonicWords::Words12 => NumWordsMnemonic::Words12,
             GenerateMnemonicWords::Words24 => NumWordsMnemonic::Words24,
@@ -247,9 +278,13 @@ impl PortalSdk {
     pub async fn restore_mnemonic(
         &self,
         mnemonic: String,
-        network: model::bitcoin::Network,
+        network: Network,
         password: Option<String>,
     ) -> Result<(), SdkError> {
+        #[cfg(feature = "wasm")]
+        let network =
+            std::convert::TryInto::try_into(network).map_err(|_| SdkError::DeserializationError)?;
+
         send_with_retry!(self.requests, Request::SetMnemonic { mnemonic: mnemonic.clone(), network, password: password.clone() }, Ok(Reply::Ok) => break Ok(()))?;
         Ok(())
     }
@@ -264,12 +299,17 @@ impl PortalSdk {
         Ok(())
     }
 
-    pub async fn display_address(&self, index: u32) -> Result<model::bitcoin::Address, SdkError> {
+    pub async fn display_address(&self, index: u32) -> Result<Address, SdkError> {
         let address = send_with_retry!(self.requests, Request::DisplayAddress(index), Ok(Reply::Address(s)) => break Ok(s))?;
         let address = address
             .parse::<model::bitcoin::Address<model::bitcoin::address::NetworkUnchecked>>()
+            .map(|v| v.assume_checked())
             .map_err(|_| SdkError::DeserializationError)?;
-        Ok(address.assume_checked())
+
+        #[cfg(feature = "wasm")]
+        let address = address.into();
+
+        Ok(address)
     }
 
     pub async fn sign_psbt(&self, psbt: String) -> Result<String, SdkError> {
@@ -298,6 +338,10 @@ impl PortalSdk {
     }
 
     pub async fn get_xpub(&self, path: bip32::DerivationPath) -> Result<DeviceXpub, SdkError> {
+        #[cfg(feature = "wasm")]
+        let path: model::bitcoin::bip32::DerivationPath =
+            std::convert::TryInto::try_into(path).map_err(|_| SdkError::DeserializationError)?;
+
         let (xpub, bsms) = send_with_retry!(self.requests, Request::GetXpub(path.clone().into()), Ok(Reply::Xpub { xpub, bsms }) => break Ok((xpub, bsms)))?;
 
         Ok(DeviceXpub {
@@ -757,20 +801,24 @@ impl InnerManager {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct CardStatus {
     pub initialized: bool,
     pub unverified: Option<bool>,
     pub unlocked: bool,
+    #[wasm_bindgen(skip)]
     pub network: Option<model::bitcoin::Network>,
     pub version: Option<String>,
     /// Added in version 0.3.0 of the firmware
     ///
     /// Only available when the device is initialized and unlocked
+    #[wasm_bindgen(skip)]
     pub fingerprint: Option<bip32::Fingerprint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct Descriptors {
     pub external: String,
     pub internal: Option<String>,
@@ -778,6 +826,7 @@ pub struct Descriptors {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct GetXpubBsmsData {
     pub version: String,
     pub token: String,
@@ -787,6 +836,7 @@ pub struct GetXpubBsmsData {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct SetDescriptorBsmsData {
     pub version: String,
     pub path_restrictions: String,
@@ -795,6 +845,7 @@ pub struct SetDescriptorBsmsData {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(inspectable, getter_with_clone))]
 pub struct DeviceXpub {
     pub xpub: String,
     pub bsms: GetXpubBsmsData,
@@ -802,6 +853,7 @@ pub struct DeviceXpub {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "bindings", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum GenerateMnemonicWords {
     Words12,
     Words24,
@@ -823,6 +875,13 @@ pub enum SdkError {
     DeviceError { cause: String },
     InvalidDescriptor { cause: String },
     UnsupportedDescriptor { cause: String },
+}
+
+#[cfg(feature = "wasm")]
+impl Into<JsValue> for SdkError {
+    fn into(self) -> JsValue {
+        todo!()
+    }
 }
 
 impl core::fmt::Display for SdkError {
@@ -907,15 +966,61 @@ mod ffi {
         }
     }
 
-    impl_custom_type_converter_str!(Network);
-    impl_custom_type_converter_str!(DerivationPath);
-    impl_custom_type_converter_str!(Fingerprint);
-
     uniffi::custom_type!(Network, String);
     uniffi::custom_type!(Address, String);
-    uniffi::custom_type!(DerivationPath, String);
-    uniffi::custom_type!(Fingerprint, String);
 }
 
 #[cfg(feature = "bindings")]
 uniffi::setup_scaffolding!();
+
+#[cfg(feature = "wasm")]
+#[allow(dead_code)]
+mod wasm {
+    use super::*;
+
+    macro_rules! custom_wrapper_type {
+        ($t:ident, $orig:ty) => {
+            custom_wrapper_type!($t, $orig, $orig, |v| { v });
+        };
+
+        ($t:ident, $orig:ty, $intermediate:ty, $map:expr) => {
+            #[allow(unused_imports)]
+            use wasm_bindgen::prelude::*;
+
+            #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+            #[wasm_bindgen(getter_with_clone)]
+            pub struct $t {
+                pub inner: String,
+            }
+
+            impl core::convert::TryInto<$orig> for $t {
+                type Error = String;
+
+                fn try_into(self) -> Result<$orig, Self::Error> {
+                    use core::str::FromStr;
+
+                    <$intermediate>::from_str(&self.inner)
+                        .map($map)
+                        .map_err(|e| e.to_string())
+                }
+            }
+            impl From<$orig> for $t {
+                fn from(orig: $orig) -> Self {
+                    $t {
+                        inner: orig.to_string(),
+                    }
+                }
+            }
+        };
+    }
+
+    custom_wrapper_type!(Network, model::bitcoin::Network);
+    custom_wrapper_type!(Address, model::bitcoin::Address, model::bitcoin::Address::<model::bitcoin::address::NetworkUnchecked>, |v| { v.assume_checked() });
+    pub mod bip32 {
+        custom_wrapper_type!(Fingerprint, model::bitcoin::bip32::Fingerprint);
+        custom_wrapper_type!(DerivationPath, model::bitcoin::bip32::DerivationPath);
+    }
+}
+
+#[cfg(feature = "wasm")]
+pub use wasm::*;
