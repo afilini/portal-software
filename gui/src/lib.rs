@@ -626,10 +626,10 @@ impl_wrapper_page!(
     ConfirmBarPage<'static, TwoLinesText<'static, 's>>
 );
 impl<'s> ConfirmEncryptionKeyPage<'s> {
-    pub fn new(pair_code: &'s str) -> Self {
+    pub fn new(key: &'s str) -> Self {
         ConfirmEncryptionKeyPage(ConfirmBarPage::new_default_bar(
             100,
-            TwoLinesText::new("Backup Key", pair_code),
+            TwoLinesText::new("Backup Key", key),
             "HOLD BTN TO CONFIRM",
             "KEEP HOLDING...",
         ))

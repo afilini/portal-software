@@ -205,6 +205,20 @@ pub fn init_gui(
 
     let sdk_cloned = Arc::clone(&sdk);
     let log_cloned = log.clone();
+    emulator_gui.wipe_btn.set_callback(move |_| {
+        let sdk_cloned = sdk_cloned.clone();
+        let log_cloned = log_cloned.clone();
+        tokio::spawn(async move {
+            log_cloned.send("> Wipe".into()).unwrap();
+            match sdk_cloned.debug_wipe_device().await {
+                Ok(v) => log_cloned.send(format!("< {:?}", v)).unwrap(),
+                Err(e) => log::warn!("Wipe err: {:?}", e),
+            }
+        });
+    });
+
+    let sdk_cloned = Arc::clone(&sdk);
+    let log_cloned = log.clone();
     emulator_gui.resume_btn.set_callback(move |_| {
         let sdk_cloned = sdk_cloned.clone();
         let log_cloned = log_cloned.clone();

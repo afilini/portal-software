@@ -310,6 +310,8 @@ pub struct UnverifiedConfig {
     pub descriptor: WalletDescriptor,
     #[cbor(n(4))]
     pub page: usize,
+    #[cbor(n(5))]
+    pub encryption_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]

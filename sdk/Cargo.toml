@@ -42,6 +42,8 @@ required-features = ["cli"]
 [[bin]]
 name = "pcsc"
 required-features = ["cli-pcsc"]
+[[bin]]
+name = "decrypt"
 
 
 [[bin]]

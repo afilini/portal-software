@@ -240,7 +240,12 @@ impl PortalSdk {
             GenerateMnemonicWords::Words24 => NumWordsMnemonic::Words24,
         };
 
+        // Expect the backup immediately
         let encrypted_backup = send_with_retry!(self.requests, Request::GenerateMnemonic { num_words, network, password: password.clone(), backup: Some(SeedBackupMethod::EncryptedFile) }, Ok(Reply::EncryptedSeed(seed)) => break Ok(seed))?;
+
+        // Acknowledge we received it
+        send_with_retry!(self.requests, Request::Resume, Ok(Reply::Ok) => break Ok(()))?;
+
         Ok(encrypted_backup.into())
     }
 
@@ -274,9 +279,20 @@ impl PortalSdk {
         Ok(())
     }
 
-    pub async fn resume(&self) -> Result<(), SdkError> {
-        send_with_retry!(self.requests, Request::Resume, Ok(Reply::Ok) => break Ok(()))?;
-        Ok(())
+    pub async fn resume(&self) -> Result<Option<Vec<u8>>, SdkError> {
+        let encrypted_backup = send_with_retry!(
+            self.requests,
+            Request::Resume,
+            Ok(Reply::EncryptedSeed(seed)) => break Ok(Some(seed)),
+            Ok(Reply::Ok) => break Ok(None)
+        )?;
+
+        // Acknowledge reception
+        if encrypted_backup.is_some() {
+            send_with_retry!(self.requests, Request::Resume, Ok(Reply::Ok) => break Ok(()))?;
+        }
+
+        Ok(encrypted_backup.map(Into::into))
     }
 
     pub async fn display_address(&self, index: u32) -> Result<model::bitcoin::Address, SdkError> {

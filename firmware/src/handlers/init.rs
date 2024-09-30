@@ -542,27 +542,52 @@ pub async fn display_mnemonic(
 
 pub async fn display_encryption_key(
     config: UnverifiedConfig,
+    encryption_key: &str,
     mut events: impl Stream<Item = Event> + Unpin,
     peripherals: &mut HandlerPeripherals,
 ) -> Result<CurrentState, Error> {
     peripherals.tsc_enabled.enable();
 
+    let page = LoadingPage::new();
+    page.init_display(&mut peripherals.display)?;
+    page.draw_to(&mut peripherals.display)?;
+    peripherals.display.flush()?;
+
     let mnemonic = Mnemonic::from_entropy(&config.entropy.bytes).map_err(map_err_config)?;
     let mnemonic = mnemonic.word_iter().collect::<alloc::vec::Vec<_>>().join(" ");
 
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
-        abcdefghijklmnopqrstuvwxyz\
-        0123456789)(*%$#!";
-    const PASSWORD_LEN: usize = 14;
+    let backup = EncryptedBackupData {
+        mnemonic,
+        network: config.network,
+    };
+    let backup = backup.encrypt(&encryption_key);
 
-    let encryption_key: String = (0..PASSWORD_LEN)
-        .map(|_| {
-            let idx = peripherals.rng.gen_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect();
+    // Send the encrypted backup immediately and make sure the SDK acknowledges it by sending "Resume"
+    peripherals.nfc.send(model::Reply::EncryptedSeed(backup.into())).await.unwrap();
 
-    let mut page = ConfirmEncryptionKeyPage::new(&encryption_key);
+    loop {
+        match events.next().await {
+            Some(Event::Request(model::Request::Resume)) => {
+                peripherals
+                    .nfc
+                    .send(model::Reply::DelayedReply)
+                    .await
+                    .unwrap();
+                peripherals.nfc_finished.recv().await.unwrap();
+                break;
+            }
+
+            Some(Event::Request(_)) => {
+                peripherals.nfc.send(model::Reply::UnexpectedMessage).await.unwrap();
+                peripherals.nfc_finished.recv().await.unwrap();
+                continue;
+            }
+            Some(_) => continue,
+            _ => unreachable!(),
+        }
+    }
+
+    let mut page = ConfirmEncryptionKeyPage::new(encryption_key);
     page.init_display(&mut peripherals.display)?;
     page.draw_to(&mut peripherals.display)?;
     peripherals.display.flush()?;
@@ -586,13 +611,7 @@ pub async fn display_encryption_key(
     let mut salt = [0; 8];
     peripherals.rng.fill_bytes(&mut salt);
 
-    let backup = EncryptedBackupData {
-        mnemonic,
-        network: config.network,
-    };
-    let backup = backup.encrypt(&encryption_key);
-
-    peripherals.nfc.send(model::Reply::EncryptedSeed(backup.into())).await.unwrap();
+    peripherals.nfc.send(model::Reply::Ok).await.unwrap();
     peripherals.nfc_finished.recv().await.unwrap();
 
     let network = config.network;
@@ -640,6 +659,24 @@ pub async fn handle_generate_seed(
 
     let descriptor = WalletDescriptor::make_bip84(network);
 
+    let encryption_key = match backup {
+        SeedBackupMethod::Display => None,
+        SeedBackupMethod::EncryptedFile => {
+            const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
+                abcdefghijklmnopqrstuvwxyz\
+                0123456789)(*%$#!";
+            const PASSWORD_LEN: usize = 14;
+
+            let encryption_key: String = (0..PASSWORD_LEN)
+                .map(|_| {
+                    let idx = peripherals.rng.gen_range(0..CHARSET.len());
+                    CHARSET[idx] as char
+                })
+                .collect();
+            Some(encryption_key)
+        }
+    };
+
     let unverified_config = UnverifiedConfig {
         entropy: Entropy {
             bytes: alloc::vec::Vec::from(entropy).into(),
@@ -648,12 +685,13 @@ pub async fn handle_generate_seed(
         pair_code: password,
         descriptor,
         page: 0,
+        encryption_key,
     };
     let unverified_config = save_unverified_config(unverified_config, peripherals).await?;
 
-    match backup {
-        SeedBackupMethod::Display => display_mnemonic(unverified_config, events, peripherals).await,
-        SeedBackupMethod::EncryptedFile => display_encryption_key(unverified_config, events, peripherals).await,
+    match unverified_config.encryption_key.clone() {
+        None => display_mnemonic(unverified_config, events, peripherals).await,
+        Some(key) => display_encryption_key(unverified_config, &key, events, peripherals).await,
     }
 }
 
@@ -683,6 +721,7 @@ pub async fn handle_import_seed(
         pair_code: password,
         descriptor,
         page: 0,
+        encryption_key: None,
     };
     let unverified_config = save_unverified_config(unverified_config, peripherals).await?;
     display_mnemonic(unverified_config, events, peripherals).await
@@ -739,5 +778,8 @@ pub async fn handle_unverified_config(
         }
     }
 
-    display_mnemonic(config, events, peripherals).await
+    match config.encryption_key.clone() {
+        None => display_mnemonic(config, events, peripherals).await,
+        Some(key) => display_encryption_key(config, &key, events, peripherals).await,
+    }
 }

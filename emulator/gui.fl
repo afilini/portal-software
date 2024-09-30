@@ -8,7 +8,7 @@ class Emulator {open
   } {
     Fl_Window window {
       label Emulator open
-      xywh {1162 204 565 1085} type Double size_range {561 1020 561 0} visible
+      xywh {1162 204 565 1115} type Double size_range {561 1020 561 0} visible
     } {
       Fl_Box display {
         xywh {25 25 511 255} labeltype NO_LABEL
@@ -141,6 +141,10 @@ class Emulator {open
             xywh {300 430 150 35}
           }
         }
+        Fl_Button wipe_btn {
+          label Wipe
+          xywh {315 375 511 35}
+        }
         Fl_Button resume_btn {
           label Resume
           xywh {315 375 511 35}
@@ -151,7 +155,7 @@ class Emulator {open
         }
       }
       Fl_Text_Display console {selected
-        xywh {25 790 511 270} labeltype NO_LABEL textfont 4
+        xywh {25 825 511 270} labeltype NO_LABEL textfont 4
         code0 {console.set_buffer(text::TextBuffer::default());}
       }
     }
