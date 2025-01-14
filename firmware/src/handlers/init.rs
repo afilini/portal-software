@@ -21,7 +21,7 @@ use futures::prelude::*;
 
 use rand::RngCore;
 
-use gui::{ConfirmPairCodePage, SingleLineTextPage};
+use gui::{ConfirmPairCodePage, SingleLineTextPage, SummaryPage};
 use model::{
     Entropy, ExtendedKey, InitializedConfig, MultisigKey, ScriptType, UnlockedConfig,
     UnverifiedConfig, WalletDescriptor,
@@ -646,15 +646,34 @@ pub async fn handle_show_mnemonic(
     peripherals.display.flush()?;
     peripherals.tsc_enabled.enable();
 
+    if resumable.page == 0 {
+        let mut page =
+            SummaryPage::new_with_threshold("Show mnemonic?", "HOLD BTN TO SHOW", 70);
+        page.init_display(&mut peripherals.display)?;
+        page.draw_to(&mut peripherals.display)?;
+        peripherals.display.flush()?;
+
+        manage_confirmation_loop_with_checkpoint(
+            &mut events,
+            peripherals,
+            &mut page,
+            &mut checkpoint,
+            resumable,
+        )
+        .await?;
+
+        resumable.page = 1;
+    }
+
     let mnemonic =
         Mnemonic::from_entropy(&wallet.config.secret.mnemonic.bytes).map_err(map_err_config)?;
     let mnemonic_str = mnemonic.word_iter().collect::<alloc::vec::Vec<_>>();
-    for (chunk_index, words) in mnemonic_str.chunks(2).enumerate().skip(resumable.page) {
+    for (chunk_index, words) in mnemonic_str.chunks(2).enumerate().skip(resumable.page - 1) {
         let mut page = MnemonicPage::new((chunk_index * 2) as u8, &words);
         page.init_display(&mut peripherals.display)?;
         page.draw_to(&mut peripherals.display)?;
         peripherals.display.flush()?;
-        resumable.page = chunk_index;
+        resumable.page = chunk_index + 1;
 
         manage_confirmation_loop_with_checkpoint(
             &mut events,
