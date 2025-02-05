@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = "libportal-ios"
-  s.version      = "0.3.0"
+  s.version      = "0.3.4"
   s.summary      = "iOS bindings for the Portal SDK"
   s.homepage     = "https://github.com/TwentyTwoHW/portal-software"
   s.license      = "GPL-3.0"
