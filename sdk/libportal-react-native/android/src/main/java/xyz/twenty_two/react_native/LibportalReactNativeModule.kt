@@ -172,13 +172,13 @@ class LibportalReactNativeModule(reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun showMnemonic(promise: Promise) {
-    try {
-      scope.launch {
+    scope.launch {
+      try {
         instance!!.showMnemonic()
         promise.resolve(null)
+      } catch (e: Exception) {
+        promise.reject(e)
       }
-    } catch (e: Exception) {
-      promise.reject(e)
     }
   }
 
