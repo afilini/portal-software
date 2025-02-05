@@ -19,7 +19,7 @@ use alloc::rc::Rc;
 
 use futures::prelude::*;
 
-use gui::InitialPage;
+use gui::{InitialPage, SummaryPage};
 use model::{DeviceInfo, Reply};
 
 use super::*;
@@ -128,4 +128,25 @@ pub async fn handle_idle(
             _ => unreachable!(),
         }
     }
+}
+
+pub async fn wipe_device(
+    mut events: impl Stream<Item = Event> + Unpin,
+    peripherals: &mut HandlerPeripherals,
+) -> Result<CurrentState, Error> {
+    let mut page = SummaryPage::new_with_threshold("Wipe device?", "HOLD BTN TO WIPE", 70);
+    page.init_display(&mut peripherals.display)?;
+    page.draw_to(&mut peripherals.display)?;
+    peripherals.display.flush()?;
+
+    peripherals.tsc_enabled.enable();
+    manage_confirmation_loop(&mut events, peripherals, &mut page).await?;
+    peripherals.tsc_enabled.disable();
+
+    crate::hw::write_flash(&mut peripherals.flash, crate::config::CONFIG_PAGE, &[])?;
+
+    peripherals.nfc.send(model::Reply::Ok).await.unwrap();
+    peripherals.nfc_finished.recv().await.unwrap();
+
+    cortex_m::peripheral::SCB::sys_reset();
 }

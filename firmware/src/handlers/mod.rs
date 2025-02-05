@@ -34,8 +34,6 @@ use crate::{checkpoint, hw, Error};
 const GIT_HASH: &'static str = fetch_git_hash::fetch_git_hash!();
 
 pub mod bitcoin;
-#[cfg(not(feature = "production"))]
-pub mod debug;
 pub mod fwupdate;
 pub mod idle;
 pub mod init;
@@ -145,12 +143,11 @@ pub enum CurrentState {
         header: FwUpdateHeader,
         fast_boot: Option<(checkpoint::FwUpdateState, [u8; 24])>,
     },
-    /// Error
-    Error,
-
-    #[cfg(not(feature = "production"))]
     /// Wipe device
     WipeDevice,
+
+    /// Error
+    Error,
 }
 
 #[derive(Debug)]
@@ -388,13 +385,12 @@ pub async fn dispatch_handler<'a>(
             fwupdate::handle_begin_fw_update(header, fast_boot, events, peripherals),
         )
             as Pin<Box<dyn Future<Output = Result<CurrentState, Error>>>>,
+        CurrentState::WipeDevice => Box::pin(idle::wipe_device(events, peripherals))
+            as Pin<Box<dyn Future<Output = Result<CurrentState, Error>>>>,
+
         CurrentState::Error => {
             handle_error(Error::Unknown, peripherals);
         }
-
-        #[cfg(not(feature = "production"))]
-        CurrentState::WipeDevice => Box::pin(debug::wipe_device(events, peripherals))
-            as Pin<Box<dyn Future<Output = Result<CurrentState, Error>>>>,
     }
     .await;
 
