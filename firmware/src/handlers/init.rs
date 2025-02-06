@@ -35,7 +35,7 @@ use bdk_wallet::keys::{DescriptorPublicKey, DescriptorSecretKey, ValidNetworks};
 use bdk_wallet::miniscript;
 use bdk_wallet::miniscript::descriptor::{DescriptorXKey, KeyMap, Wildcard};
 
-use gui::{GeneratingMnemonicPage, LoadingPage, MnemonicPage, Page, WelcomePage};
+use gui::{LoadingPage, MnemonicPage, Page, WelcomePage};
 use model::{Config, DeviceInfo};
 
 use super::*;
@@ -560,7 +560,7 @@ pub async fn handle_generate_seed(
     events: impl Stream<Item = Event> + Unpin,
     peripherals: &mut HandlerPeripherals,
 ) -> Result<CurrentState, Error> {
-    let page = GeneratingMnemonicPage::new(num_words);
+    let page = LoadingPage::new();
     page.init_display(&mut peripherals.display)?;
     page.draw_to(&mut peripherals.display)?;
     peripherals.display.flush()?;
@@ -591,7 +591,7 @@ pub async fn handle_import_seed(
     mnemonic: String,
     network: Network,
     password: Option<String>,
-    events: impl Stream<Item = Event> + Unpin,
+    mut events: impl Stream<Item = Event> + Unpin,
     peripherals: &mut HandlerPeripherals,
 ) -> Result<CurrentState, Error> {
     let page = LoadingPage::new();
@@ -604,6 +604,18 @@ pub async fn handle_import_seed(
     let entropy = &entropy[..len];
 
     let descriptor = WalletDescriptor::make_bip84(network);
+
+    let mut page = SummaryPage::new("Importing\nexternal seed", "HOLD BTN TO CONTINUE");
+    page.init_display(&mut peripherals.display)?;
+    page.draw_to(&mut peripherals.display)?;
+    peripherals.display.flush()?;
+    peripherals.tsc_enabled.enable();
+    manage_confirmation_loop(
+        &mut events,
+        peripherals,
+        &mut page,
+    )
+    .await?;
 
     let unverified_config = UnverifiedConfig {
         entropy: Entropy {
@@ -647,8 +659,7 @@ pub async fn handle_show_mnemonic(
     peripherals.tsc_enabled.enable();
 
     if resumable.page == 0 {
-        let mut page =
-            SummaryPage::new_with_threshold("Show mnemonic?", "HOLD BTN TO SHOW", 70);
+        let mut page = SummaryPage::new_with_threshold("Show mnemonic?", "HOLD BTN TO SHOW", 70);
         page.init_display(&mut peripherals.display)?;
         page.draw_to(&mut peripherals.display)?;
         peripherals.display.flush()?;

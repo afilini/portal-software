@@ -210,18 +210,6 @@ impl<'s> Page for InitialPage<'s> {
     }
 }
 
-pub struct GeneratingMnemonicPage(SingleLineTextPage<'static>);
-impl_wrapper_page!(GeneratingMnemonicPage, SingleLineTextPage<'static>);
-impl GeneratingMnemonicPage {
-    pub fn new(num_words: model::NumWordsMnemonic) -> Self {
-        let msg = match num_words {
-            model::NumWordsMnemonic::Words12 => "12 W",
-            model::NumWordsMnemonic::Words24 => "24 W",
-        };
-        GeneratingMnemonicPage(SingleLineTextPage::new(msg))
-    }
-}
-
 pub struct LoadingPage(SingleLineTextPage<'static>);
 impl_wrapper_page!(LoadingPage, SingleLineTextPage<'static>);
 impl LoadingPage {
