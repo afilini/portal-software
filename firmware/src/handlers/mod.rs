@@ -18,14 +18,16 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::pin::Pin;
 
 use futures::pin_mut;
 use futures::prelude::*;
 
+use tinyminiscript::bitcoin::{bip32, secp256k1, Network};
+
 use gui::{ConfirmBarPage, ErrorPage, MainContent, Page};
-use model::bitcoin::bip32;
 use model::{FwUpdateHeader, NumWordsMnemonic, Reply};
 
 use crate::{checkpoint, hw, Error};
@@ -38,20 +40,58 @@ pub mod fwupdate;
 pub mod idle;
 pub mod init;
 
+pub struct BitcoinWallet {
+    external: String,
+    internal: String,
+    network: Network,
+    secp: secp256k1::Secp256k1<secp256k1::All>,
+    private_key: bip32::Xpriv,
+    allowed_prefixes: Vec<bip32::DerivationPath>,
+}
+
+impl BitcoinWallet {
+    pub fn new(
+        external: String,
+        internal: String,
+        private_key: bip32::Xpriv,
+        network: Network,
+        allowed_prefixes: Vec<bip32::DerivationPath>,
+    ) -> Self {
+        let secp = secp256k1::Secp256k1::new();
+
+        BitcoinWallet {
+            external,
+            internal,
+            network,
+            secp,
+            private_key,
+            allowed_prefixes,
+        }
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
+    pub fn secp_ctx(&self) -> &secp256k1::Secp256k1<secp256k1::All> {
+        &self.secp
+    }
+}
+
 pub struct PortalWallet {
-    pub bdk: bdk_wallet::Wallet,
+    pub bdk: BitcoinWallet,
     pub xprv: bip32::Xpriv,
     pub config: model::UnlockedConfig,
 }
 
 impl PortalWallet {
-    pub fn new(bdk: bdk_wallet::Wallet, xprv: bip32::Xpriv, config: model::UnlockedConfig) -> Self {
+    pub fn new(bdk: BitcoinWallet, xprv: bip32::Xpriv, config: model::UnlockedConfig) -> Self {
         PortalWallet { bdk, xprv, config }
     }
 }
 
 impl core::ops::Deref for PortalWallet {
-    type Target = bdk_wallet::Wallet;
+    type Target = BitcoinWallet;
     fn deref(&self) -> &Self::Target {
         &self.bdk
     }
@@ -74,13 +114,13 @@ pub enum CurrentState {
     /// Generating seed
     GenerateSeed {
         num_words: NumWordsMnemonic,
-        network: bdk_wallet::bitcoin::Network,
+        network: tinyminiscript::bitcoin::Network,
         password: Option<String>,
     },
     /// Importing seed
     ImportSeed {
         mnemonic: String,
-        network: bdk_wallet::bitcoin::Network,
+        network: tinyminiscript::bitcoin::Network,
         password: Option<String>,
     },
     /// Show mnemonic on display
