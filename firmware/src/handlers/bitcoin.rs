@@ -15,11 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+use ::bitcoin::address::NetworkUnchecked;
 use futures::prelude::*;
 
 use tinyminiscript::bitcoin::consensus::Encodable;
@@ -194,6 +194,37 @@ impl SerializePsbt for psbt::raw::Pair {
     }
 }
 
+fn parse_bip353_data(psbt_out: &psbt::Output) -> Result<Option<(String, String)>, ()> {
+    use core::str::FromStr;
+
+    let bip353_key = psbt::raw::Key {
+        type_value: 0x35,
+        key: Default::default(),
+    };
+    if let Some(bip353_data) = psbt_out.unknown.get(&bip353_key) {
+        let len = bip353_data[0] as usize;
+        let name = core::str::from_utf8(&bip353_data[1..len]).map_err(|_| ())?;
+        let proofs = dnssec_prover::ser::parse_rr_stream(&bip353_data[len..]).map_err(|_| ())?;
+        let verified = dnssec_prover::validation::verify_rr_stream(&proofs).map_err(|_| ())?;
+
+        match verified.verified_rrs.get(0) {
+            Some(dnssec_prover::rr::RR::Txt(txt)) => {
+                let data = txt.data.as_vec();
+                let data_string = core::str::from_utf8(&data).map_err(|_| ())?;
+                let parsed =
+                    bip21::Uri::<'_, NetworkUnchecked>::from_str(data_string).map_err(|_| ())?;
+                Ok(Some((
+                    parsed.address.assume_checked().to_string(),
+                    name.to_string(),
+                )))
+            }
+            _ => Err(()),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 pub async fn handle_sign_request(
     wallet: &mut Rc<PortalWallet>,
     psbt: Vec<u8>,
@@ -244,8 +275,16 @@ pub async fn handle_sign_request(
             .derive_from_psbt_output(psbt_out, &wallet.secp_ctx())
             .is_none()
         {
-            let address = Address::from_script(&out.script_pubkey, wallet.network()).unwrap();
-            outputs.push((checkpoint::CborAddress(address), out.value.to_sat()));
+            if let Some((address, name)) = parse_bip353_data(psbt_out).ok().flatten() {
+                let address_from_script =
+                    Address::from_script(&out.script_pubkey, wallet.network()).unwrap();
+                if address_from_script.to_string() == address {
+                    outputs.push((checkpoint::DisplayAddress::BIP353(name), out.value.to_sat()));
+                }
+            } else {
+                let address = Address::from_script(&out.script_pubkey, wallet.network()).unwrap();
+                outputs.push((checkpoint::DisplayAddress::Address(checkpoint::CborAddress(address)), out.value.to_sat()));
+            }
         }
     }
 
@@ -290,7 +329,7 @@ pub async fn handle_sign_request(
 
 pub async fn handle_confirm_sign_psbt(
     wallet: &mut Rc<PortalWallet>,
-    outputs: Vec<(checkpoint::CborAddress, u64)>,
+    outputs: Vec<(checkpoint::DisplayAddress, u64)>,
     fees: u64,
     resumable: checkpoint::Resumable,
     sig_bytes: Vec<u8>,
@@ -308,8 +347,14 @@ pub async fn handle_confirm_sign_psbt(
         encryption_key.clone(),
     );
 
-    for ((address, value), state, draw) in resumable.wrap_iter(outputs.iter()) {
-        let value = Amount::from_sat(*value);
+    let num_outputs = outputs.len();
+    for ((address, value), state, draw) in resumable.wrap_iter(outputs.into_iter()) {
+        let value = Amount::from_sat(value);
+
+        let address = match address {
+            checkpoint::DisplayAddress::Address(addr) => addr.to_string(),
+            checkpoint::DisplayAddress::BIP353(username) => username,
+        };
 
         let mut page = TxOutputPage::new(&address, value);
         page.init_display(&mut peripherals.display)?;
@@ -328,7 +373,7 @@ pub async fn handle_confirm_sign_psbt(
         .await?;
     }
 
-    if let Some((state, draw)) = resumable.single_page_with_offset(outputs.len()) {
+    if let Some((state, draw)) = resumable.single_page_with_offset(num_outputs) {
         let mut page = TxSummaryPage::new(Amount::from_sat(fees));
         page.init_display(&mut peripherals.display)?;
         page.draw_to(&mut peripherals.display)?;

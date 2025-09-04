@@ -30,6 +30,8 @@ bip39 = { version = "2.0", default-features = false }
 bitcoin_hashes = { version = "0.14.0", default-features = false, features = ["small-hash"] }
 secp256k1 = { version = "0.29", default-features = false, features = ["alloc", "lowmemory"] }
 fetch-git-hash = { path = "../fetch-git-hash" }
+dnssec-prover = { version = "0.6.8", default-features = false, features = ["validation", "slower_smaller_binary"] }
+bip21 = "0.5.0"
 
 model = { package="portal-model", path = "../portal-model", features = ["stm32"] }
 gui = { path = "../gui", features = ["stm32"] }

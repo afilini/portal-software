@@ -164,7 +164,7 @@ pub enum CurrentState {
     /// Confirm sign request
     ConfirmSignPsbt {
         wallet: Rc<PortalWallet>,
-        outputs: alloc::vec::Vec<(checkpoint::CborAddress, u64)>,
+        outputs: alloc::vec::Vec<(checkpoint::DisplayAddress, u64)>,
         fees: u64,
         sig_bytes: alloc::vec::Vec<u8>,
         resumable: checkpoint::Resumable,
