@@ -1157,7 +1157,7 @@ checksum = "7300fbefb4dadc1af235a9cef3737cea692a9d97e1b9cbcd4ebdae6f8868e6fb"
 [[package]]
 name = "tinyminiscript"
 version = "0.0.3"
-source = "git+https://github.com/afilini/tinyminiscript.git?rev=40d5fe075f92e45b8b0fbc292aa59799295582a8#40d5fe075f92e45b8b0fbc292aa59799295582a8"
+source = "git+https://github.com/afilini/tinyminiscript.git?rev=89c2d68b5a3d7795184163c92a3bdae9b4e092f0#89c2d68b5a3d7795184163c92a3bdae9b4e092f0"
 dependencies = [
  "bitcoin",
 ]

@@ -240,7 +240,7 @@ pub async fn handle_sign_request(
     let mut outputs = alloc::vec![];
     for (out, psbt_out) in psbt.unsigned_tx.output.iter().zip(psbt.outputs.iter()) {
         if wallet
-            .external()
+            .internal()
             .derive_from_psbt_output(psbt_out, &wallet.secp_ctx())
             .is_none()
         {
@@ -1074,7 +1074,7 @@ impl<'a> DescriptorMeta<'a> for ParserContext<'a> {
                 let derive_path = key_origins
                     .get_key_value(&root_fingerprint)
                     .and_then(|(fingerprint, (path, expected))| {
-                        xpub_matches(xpub, &(*fingerprint, (*path).clone()))
+                        xpub_matches(&xpub, &(*fingerprint, (*path).clone()))
                             .zip(Some((path, expected)))
                     })
                     .and_then(|(prefix, (full_path, expected))| {
@@ -1089,7 +1089,7 @@ impl<'a> DescriptorMeta<'a> for ParserContext<'a> {
                         // that come before the wildcard, so we take them directly from `xpub` and then append
                         // the final index
                         if verify_key(
-                            xpub,
+                            &xpub,
                             &xpub.path.extend(derive_path.clone()),
                             expected,
                         ) {
