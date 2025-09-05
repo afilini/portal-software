@@ -16,6 +16,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use alloc::vec::Vec;
+use alloc::string::ToString;
+use tinyminiscript::parser::keys::Wildcard;
 use core::str::FromStr;
 
 use futures::prelude::*;
@@ -31,6 +33,7 @@ use model::{
 use bip39::Mnemonic;
 use tinyminiscript::bitcoin::bip32;
 use tinyminiscript::bitcoin::Network;
+use tinyminiscript::parser::keys::ExtendedKey as MiniscriptExtendedKey;
 
 use gui::{LoadingPage, MnemonicPage, Page, WelcomePage};
 use model::{Config, DeviceInfo};
@@ -48,7 +51,7 @@ fn build_bdk_wallet_descriptor(
     xprv: &bip32::Xpriv,
     descriptor: model::WalletDescriptor,
     keychain: KeychainKind,
-) -> Result<(String, bip32::DerivationPath), Error> {
+) -> Result<(String, TransactionSigner), Error> {
     fn extend_path(path: bip32::DerivationPath, keychain: KeychainKind) -> bip32::DerivationPath {
         let index = if keychain == KeychainKind::External {
             0
@@ -63,11 +66,11 @@ fn build_bdk_wallet_descriptor(
         derivation_path: bip32::DerivationPath,
         xprv: &bip32::Xpriv,
         keychain: KeychainKind,
-    ) -> Result<(String, bip32::DerivationPath), Error> {
-        use alloc::string::ToString;
+        x_only: bool,
+    ) -> Result<(MiniscriptExtendedKey, TransactionSigner), Error> {
         let secp = secp256k1::Secp256k1::new();
 
-        let split_position = derivation_path
+        let split_position = derivation_path.len() - derivation_path
             .into_iter()
             .rev()
             .take_while(|c| c.is_normal())
@@ -83,28 +86,32 @@ fn build_bdk_wallet_descriptor(
 
         let full_path = extend_path(derivation_path, keychain);
 
-        Ok((
-            alloc::format!(
-                "[{origin_fingerprint}{}]{derived_key}/{}/*",
-                &origin_path.to_string()[1..],
-                &full_path.to_string()[1..]
-            ),
-            origin_path,
-        ))
+        let miniscript_key = MiniscriptExtendedKey {
+            origin: Some((origin_fingerprint, origin_path.clone())),
+            key: derived_key,
+            path: full_path,
+            wildcard: Wildcard::Normal,
+            x_only,
+        };
+
+        let mut signer = TransactionSigner::default();
+        signer.insert(miniscript_key.clone(), xprv.clone());
+
+        Ok((miniscript_key, signer))
     }
 
     match (descriptor.variant, descriptor.script_type) {
         (model::DescriptorVariant::SingleSig(path), ScriptType::NativeSegwit) => {
-            let (pubkey, prefix) = make_local_key(path.into(), xprv, keychain)?;
-            Ok((alloc::format!("wpkh({pubkey})"), prefix))
+            let (pubkey, signer) = make_local_key(path.into(), xprv, keychain, false)?;
+            Ok((alloc::format!("wpkh({pubkey})"), signer))
         }
         (model::DescriptorVariant::SingleSig(path), ScriptType::WrappedSegwit) => {
-            let (pubkey, prefix) = make_local_key(path.into(), xprv, keychain)?;
-            Ok((alloc::format!("sh(wpkh({pubkey}))"), prefix))
+            let (pubkey, signer) = make_local_key(path.into(), xprv, keychain, false)?;
+            Ok((alloc::format!("sh(wpkh({pubkey}))"), signer))
         }
         (model::DescriptorVariant::SingleSig(path), ScriptType::Legacy) => {
-            let (pubkey, prefix) = make_local_key(path.into(), xprv, keychain)?;
-            Ok((alloc::format!("pkh({pubkey})"), prefix))
+            let (pubkey, signer) = make_local_key(path.into(), xprv, keychain, false)?;
+            Ok((alloc::format!("pkh({pubkey})"), signer))
         }
 
         (
@@ -119,62 +126,58 @@ fn build_bdk_wallet_descriptor(
                 keys: Vec<MultisigKey>,
                 xprv: &bip32::Xpriv,
                 keychain: KeychainKind,
-            ) -> Result<(Vec<String>, bip32::DerivationPath), Error> {
-                use alloc::string::ToString;
-
-                let (keys, prefixes): (Vec<_>, Vec<_>) = keys
+            ) -> Result<(Vec<MiniscriptExtendedKey>, TransactionSigner), Error> {
+                let (keys, signers): (Vec<_>, Vec<_>) = keys
                     .into_iter()
                     .map(|key| match key {
                         MultisigKey::Local(path) => {
-                            let (key, prefix) =
-                                make_local_key(path.clone().into(), xprv, keychain)?;
-                            Ok((key, Some(prefix)))
+                            let (key, signer) =
+                                make_local_key(path.clone().into(), xprv, keychain, false)?;
+                            Ok((key, Some(signer)))
                         }
                         MultisigKey::External(ExtendedKey { origin, key, path }) => {
-                            let origin = origin.map(|(fingerprint, path)| {
-                                let fingerprint: bip32::Fingerprint = fingerprint.into();
-                                let path: bip32::DerivationPath = path.into();
-                                alloc::format!("[{fingerprint}{}]", &path.to_string()[1..])
-                            });
+                            let origin = origin.map(|(f, p)| (f.into(), p.into()));
                             let key = key
                                 .as_xpub()
                                 .expect("The key was checked when setting the config");
                             let path: bip32::DerivationPath = path.into();
-                            Ok((
-                                alloc::format!(
-                                    "{}{key}/{}/*",
-                                    &origin.unwrap_or_default(),
-                                    &path.to_string()[1..]
-                                ),
-                                None,
-                            ))
+
+                            let miniscript_key = MiniscriptExtendedKey {
+                                origin,
+                                key,
+                                path,
+                                wildcard: Wildcard::Normal,
+                                x_only: false,
+                            };
+
+                            Ok((miniscript_key, None))
                         }
                     })
                     .collect::<Result<alloc::vec::Vec<_>, Error>>()?
                     .into_iter()
                     .unzip();
 
-                let prefix = prefixes
+                let signer = signers
                     .into_iter()
                     .flatten()
                     .next()
                     .expect("Local key must be present");
 
-                Ok((keys, prefix))
+                Ok((keys, signer))
             }
 
             // Unfortunately we have to duplicate this piece of code because we can't create a fragment for a "sortedmulti"
             if is_sorted {
-                let (keys, prefix) = get_keys_vector(keys, xprv, keychain)?;
+                let (keys, signer) = get_keys_vector(keys, xprv, keychain)?;
 
                 match script_type {
                     ScriptType::NativeSegwit => Ok((
-                        alloc::format!("wsh(sortedmulti({threshold},{}))", keys.join(",")),
-                        prefix,
+                        alloc::format!("wsh(sortedmulti({threshold},{}))", keys.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",")),
+                        signer,
                     )),
                     ScriptType::WrappedSegwit => Ok((
-                        alloc::format!("sh(wsh(sortedmulti({threshold},{})))", keys.join(",")),
-                        prefix,
+                        alloc::format!("sh(wsh(sortedmulti({threshold},{})))", keys.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",")),
+                        signer,
                     )),
                     ScriptType::Legacy => Err(Error::Config(crate::hw::FlashError::CorruptedData)),
                 }
@@ -207,12 +210,12 @@ pub(super) fn make_wallet_from_xprv(
     network: Network,
     config: model::UnlockedConfig,
 ) -> Result<PortalWallet, Error> {
-    let (descriptor_external, prefix_external) = build_bdk_wallet_descriptor(
+    let (descriptor_external, signer_external) = build_bdk_wallet_descriptor(
         &xprv,
         config.secret.descriptor.clone(),
         KeychainKind::External,
     )?;
-    let (descriptor_internal, prefix_internal) = build_bdk_wallet_descriptor(
+    let (descriptor_internal, signer_internal) = build_bdk_wallet_descriptor(
         &xprv,
         config.secret.descriptor.clone(),
         KeychainKind::Internal,
@@ -221,9 +224,8 @@ pub(super) fn make_wallet_from_xprv(
     let wallet = BitcoinWallet::new(
         descriptor_external,
         descriptor_internal,
-        xprv,
+        TransactionSigner::merge(signer_external, signer_internal),
         network,
-        alloc::vec![prefix_external, prefix_internal],
     );
 
     Ok(PortalWallet::new(wallet, xprv, config))

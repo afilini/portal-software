@@ -24,7 +24,9 @@ use futures::prelude::*;
 
 use tinyminiscript::bitcoin::consensus::Encodable;
 use tinyminiscript::bitcoin::{bip32, ecdsa, psbt, taproot};
-use tinyminiscript::bitcoin::{Address, Amount, PublicKey, XOnlyPublicKey};
+use tinyminiscript::bitcoin::{Address, Amount, PublicKey, XOnlyPublicKey, TapLeafHash};
+use tinyminiscript::parser::keys::Wildcard;
+use tinyminiscript::parser::{keys::ExtendedKey as MiniscriptExtendedKey, ParserContext};
 
 use gui::{
     GenericTwoLinePage, LoadingPage, Page, ShowScrollingAddressPage, SummaryPage, TxOutputPage,
@@ -34,8 +36,10 @@ use model::{
     DescriptorVariant, ExtendedKey, MultisigKey, ScriptType, SerializedDerivationPath,
     SetDescriptorVariant, WalletDescriptor,
 };
+use tinyminiscript::script::{build_address, build_script};
 
 use super::*;
+use crate::bitcoin_utils::{xpub_matches, SignerContext};
 use crate::{bitcoin_utils::KeychainKind, checkpoint, Error};
 
 type SecpCtx = secp256k1::Secp256k1<secp256k1::All>;
@@ -205,11 +209,7 @@ pub async fn handle_sign_request(
 
     let mut psbt = psbt::Psbt::deserialize(&psbt).unwrap();
 
-    let allow_witness_utxo = true;
-    // let allow_witness_utxo = matches!(
-    //     wallet.public_descriptor(KeychainKind::External),
-    //     bdk_wallet::miniscript::Descriptor::Tr(_)
-    // );
+    let allow_witness_utxo = wallet.external().descriptor() == Descriptor::Tr;
 
     let mut total_input_value = bitcoin::Amount::ZERO;
     for (txin, input) in psbt.unsigned_tx.input.iter().zip(psbt.inputs.iter()) {
@@ -239,27 +239,22 @@ pub async fn handle_sign_request(
 
     let mut outputs = alloc::vec![];
     for (out, psbt_out) in psbt.unsigned_tx.output.iter().zip(psbt.outputs.iter()) {
-        // if wallet
-        //     .public_descriptor(KeychainKind::Internal)
-        //     .derive_from_psbt_output(psbt_out, &wallet.secp_ctx())
-        //     .is_none()
-        // {
-        //     let address = Address::from_script(&out.script_pubkey, wallet.network()).unwrap();
-        //     outputs.push((checkpoint::CborAddress(address), out.value.to_sat()));
-        // }
+        if wallet
+            .external()
+            .derive_from_psbt_output(psbt_out, &wallet.secp_ctx())
+            .is_none()
+        {
+            let address = Address::from_script(&out.script_pubkey, wallet.network()).unwrap();
+            outputs.push((checkpoint::CborAddress(address), out.value.to_sat()));
+        }
     }
 
     let current_sigs = CurrentSignatures::from_psbt(&psbt);
 
-    // wallet
-    //     .sign(
-    //         &mut psbt,
-    //         bdk_wallet::SignOptions {
-    //             try_finalize: false,
-    //             ..Default::default()
-    //         },
-    //     )
-    //     .unwrap();
+    for input_index in 0..psbt.inputs.len() {
+        use crate::bitcoin_utils::InputSigner;
+        wallet.signer().sign_input(&mut psbt, input_index, wallet.context(), &wallet.secp_ctx()).unwrap();
+    }
 
     let diff = CurrentSignatures::diff(&current_sigs, psbt);
     let mut sig_bytes = alloc::vec![];
@@ -457,11 +452,11 @@ pub async fn handle_display_address_request(
         .await?;
     }
 
-    let addr = String::from("TODO");
-    // let addr = Rc::get_mut(wallet)
-    //     .unwrap()
-    //     .peek_address(KeychainKind::External, index);
-    // let addr = addr.to_string();
+    let wallet = Rc::clone(&wallet);
+    let mut descriptor = wallet.external();
+    descriptor.derive(index).map_err(|_| Error::Wallet)?;
+    let addr = build_address(&descriptor, wallet.network()).map_err(|_| "Invalid address").unwrap();
+    let addr = addr.to_string();
 
     if let Some((state, draw)) = resumable.single_page_with_offset(1) {
         let message = alloc::format!("Address #{}", index);
@@ -490,7 +485,7 @@ pub async fn handle_display_address_request(
     checkpoint.remove(&peripherals.rtc);
 
     Ok(CurrentState::Idle {
-        wallet: Rc::clone(wallet),
+        wallet: Rc::clone(&wallet),
     })
 }
 
@@ -536,13 +531,8 @@ pub async fn handle_public_descriptor_request(
         .await?;
     }
 
-    // let descriptor = wallet.public_descriptor(KeychainKind::External);
-    // let descriptor = descriptor.to_string();
-
-    // let internal_descriptor = wallet.public_descriptor(KeychainKind::Internal);
-    // let internal_descriptor = internal_descriptor.to_string();
-    let descriptor = String::from("TODO");
-    let internal_descriptor = String::from("TODO");
+    let descriptor = wallet.external.clone();
+    let internal_descriptor = wallet.internal.clone();
 
     peripherals
         .nfc
@@ -619,14 +609,14 @@ pub async fn handle_get_xpub_request(
         .xprv
         .derive_priv(wallet.secp_ctx(), &derivation_path)
         .map_err(|_| Error::Wallet)?;
-    // let key = DescriptorXKey {
-    //     origin: Some((wallet.xprv.fingerprint(wallet.secp_ctx()), derivation_path)),
-    //     xkey: bip32::Xpub::from_priv(wallet.secp_ctx(), &derived),
-    //     derivation_path: Default::default(),
-    //     wildcard: Wildcard::None,
-    // };
-    // let xpub = DescriptorPublicKey::XPub(key).to_string();
-    let xpub = String::from("TODO");
+    let key = MiniscriptExtendedKey {
+        origin: Some((wallet.xprv.fingerprint(wallet.secp_ctx()), derivation_path)),
+        key: bip32::Xpub::from_priv(wallet.secp_ctx(), &derived),
+        path: Default::default(),
+        wildcard: Wildcard::None,
+        x_only: false, // Doesn't matter for serializing to string
+    };
+    let xpub = key.to_string();
 
     let bsms = model::BsmsRound1::new(
         "1.0",
@@ -764,10 +754,9 @@ pub async fn handle_set_descriptor_request(
         let new_wallet =
             super::init::make_wallet_from_xprv(wallet.xprv, wallet.network(), new_config)
                 .map_err(|_| "Unable to create wallet")?;
-        // let wallet_address = new_wallet
-        //     .peek_address(KeychainKind::External, 0)
-        //     .address;
-        let wallet_address = String::from("TODO");
+        let mut descriptor = new_wallet.external();
+        descriptor.derive(0).map_err(|_| Error::Wallet).unwrap();
+        let wallet_address = build_address(&descriptor, new_wallet.network()).map_err(|_| "Invalid address").unwrap();
 
         if let Some(bsms) = bsms {
             if bsms.first_address != wallet_address.to_string() {
@@ -1024,199 +1013,165 @@ pub async fn handle_set_descriptor_request(
     })
 }
 
+type HdKeyPaths = BTreeMap<secp256k1::PublicKey, bip32::KeySource>;
+type TapKeyOrigins = BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, bip32::KeySource)>;
+
 // Taken from BDK
-// pub(crate) trait DescriptorMeta {
-//     fn is_witness(&self) -> bool;
-//     fn is_taproot(&self) -> bool;
-//     fn get_extended_keys(&self) -> Result<Vec<DescriptorXKey<bip32::Xpub>>, DescriptorError>;
-//     fn derive_from_hd_keypaths<'s>(
-//         &self,
-//         hd_keypaths: &HdKeyPaths,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor>;
-//     fn derive_from_tap_key_origins<'s>(
-//         &self,
-//         tap_key_origins: &TapKeyOrigins,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor>;
-//     fn derive_from_psbt_key_origins<'s>(
-//         &self,
-//         key_origins: BTreeMap<bip32::Fingerprint, (&bip32::DerivationPath, SinglePubKey)>,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor>;
-//     fn derive_from_psbt_output<'s>(
-//         &self,
-//         psbt_output: &psbt::Output,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor>;
-// }
-//
-// impl DescriptorMeta for ExtendedDescriptor {
-//     fn is_witness(&self) -> bool {
-//         matches!(
-//             self.desc_type(),
-//             DescriptorType::Wpkh
-//                 | DescriptorType::ShWpkh
-//                 | DescriptorType::Wsh
-//                 | DescriptorType::ShWsh
-//                 | DescriptorType::ShWshSortedMulti
-//                 | DescriptorType::WshSortedMulti
-//         )
-//     }
-//
-//     fn is_taproot(&self) -> bool {
-//         self.desc_type() == DescriptorType::Tr
-//     }
-//
-//     fn get_extended_keys(&self) -> Result<Vec<DescriptorXKey<bip32::Xpub>>, DescriptorError> {
-//         let mut answer = Vec::new();
-//
-//         self.for_each_key(|pk| {
-//             if let DescriptorPublicKey::XPub(xpub) = pk {
-//                 answer.push(xpub.clone());
-//             }
-//
-//             true
-//         });
-//
-//         Ok(answer)
-//     }
-//
-//     fn derive_from_psbt_key_origins<'s>(
-//         &self,
-//         key_origins: BTreeMap<bip32::Fingerprint, (&bip32::DerivationPath, SinglePubKey)>,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor> {
-//         // Ensure that deriving `xpub` with `path` yields `expected`
-//         let verify_key = |xpub: &DescriptorXKey<bip32::Xpub>,
-//                           path: &bip32::DerivationPath,
-//                           expected: &SinglePubKey| {
-//             let derived = xpub
-//                 .xkey
-//                 .derive_pub(secp, path)
-//                 .expect("The path should never contain hardened derivation steps")
-//                 .public_key;
-//
-//             match expected {
-//                 SinglePubKey::FullKey(pk) if &PublicKey::new(derived) == pk => true,
-//                 SinglePubKey::XOnly(pk) if &XOnlyPublicKey::from(derived) == pk => true,
-//                 _ => false,
-//             }
-//         };
-//
-//         let mut path_found = None;
-//
-//         // using `for_any_key` should make this stop as soon as we return `true`
-//         self.for_any_key(|key| {
-//             if let DescriptorPublicKey::XPub(xpub) = key {
-//                 // Check if the key matches one entry in our `key_origins`. If it does, `matches()` will
-//                 // return the "prefix" that matched, so we remove that prefix from the full path
-//                 // found in `key_origins` and save it in `derive_path`. We expect this to be a derivation
-//                 // path of length 1 if the key is `wildcard` and an empty path otherwise.
-//                 let root_fingerprint = match xpub.origin {
-//                     Some((fingerprint, _)) => fingerprint,
-//                     None => xpub.xkey.xkey_fingerprint(secp),
-//                 };
-//                 let derive_path = key_origins
-//                     .get_key_value(&root_fingerprint)
-//                     .and_then(|(fingerprint, (path, expected))| {
-//                         xpub.matches(&(*fingerprint, (*path).clone()), secp)
-//                             .zip(Some((path, expected)))
-//                     })
-//                     .and_then(|(prefix, (full_path, expected))| {
-//                         let derive_path = full_path
-//                             .into_iter()
-//                             .skip(prefix.into_iter().count())
-//                             .cloned()
-//                             .collect::<bip32::DerivationPath>();
-//
-//                         // `derive_path` only contains the replacement index for the wildcard, if present, or
-//                         // an empty path for fixed descriptors. To verify the key we also need the normal steps
-//                         // that come before the wildcard, so we take them directly from `xpub` and then append
-//                         // the final index
-//                         if verify_key(
-//                             xpub,
-//                             &xpub.derivation_path.extend(derive_path.clone()),
-//                             expected,
-//                         ) {
-//                             Some(derive_path)
-//                         } else {
-//                             log::debug!(
-//                                 "Key `{}` derived with {} yields an unexpected key",
-//                                 root_fingerprint,
-//                                 derive_path
-//                             );
-//                             None
-//                         }
-//                     });
-//
-//                 match derive_path {
-//                     Some(path) if xpub.wildcard != Wildcard::None && path.len() == 1 => {
-//                         // Ignore hardened wildcards
-//                         if let bip32::ChildNumber::Normal { index } = path[0] {
-//                             path_found = Some(index);
-//                             return true;
-//                         }
-//                     }
-//                     Some(path) if xpub.wildcard == Wildcard::None && path.is_empty() => {
-//                         path_found = Some(0);
-//                         return true;
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//
-//             false
-//         });
-//
-//         path_found.map(|path| self.at_derivation_index(path).unwrap())
-//     }
-//
-//     fn derive_from_hd_keypaths<'s>(
-//         &self,
-//         hd_keypaths: &HdKeyPaths,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor> {
-//         // "Convert" an hd_keypaths map to the format required by `derive_from_psbt_key_origins`
-//         let key_origins = hd_keypaths
-//             .iter()
-//             .map(|(pk, (fingerprint, path))| {
-//                 (
-//                     *fingerprint,
-//                     (path, SinglePubKey::FullKey(PublicKey::new(*pk))),
-//                 )
-//             })
-//             .collect();
-//         self.derive_from_psbt_key_origins(key_origins, secp)
-//     }
-//
-//     fn derive_from_tap_key_origins<'s>(
-//         &self,
-//         tap_key_origins: &TapKeyOrigins,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor> {
-//         // "Convert" a tap_key_origins map to the format required by `derive_from_psbt_key_origins`
-//         let key_origins = tap_key_origins
-//             .iter()
-//             .map(|(pk, (_, (fingerprint, path)))| (*fingerprint, (path, SinglePubKey::XOnly(*pk))))
-//             .collect();
-//         self.derive_from_psbt_key_origins(key_origins, secp)
-//     }
-//
-//     fn derive_from_psbt_output<'s>(
-//         &self,
-//         psbt_output: &psbt::Output,
-//         secp: &'s SecpCtx,
-//     ) -> Option<DerivedDescriptor> {
-//         if let Some(derived) = self.derive_from_hd_keypaths(&psbt_output.bip32_derivation, secp) {
-//             return Some(derived);
-//         }
-//         if let Some(derived) = self.derive_from_tap_key_origins(&psbt_output.tap_key_origins, secp)
-//         {
-//             return Some(derived);
-//         }
-//
-//         None
-//     }
-// }
-//
+pub(crate) trait DescriptorMeta<'a> {
+    fn derive_from_hd_keypaths<'s>(
+        &'a self,
+        hd_keypaths: &HdKeyPaths,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>>;
+    fn derive_from_tap_key_origins<'s>(
+        &'a self,
+        tap_key_origins: &TapKeyOrigins,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>>;
+    fn derive_from_psbt_key_origins<'s>(
+        &'a self,
+        key_origins: BTreeMap<bip32::Fingerprint, (&bip32::DerivationPath, secp256k1::PublicKey)>,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>>;
+    fn derive_from_psbt_output<'s>(
+        &'a self,
+        psbt_output: &psbt::Output,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>>;
+}
+
+impl<'a> DescriptorMeta<'a> for ParserContext<'a> {
+    fn derive_from_psbt_key_origins<'s>(
+        &'a self,
+        key_origins: BTreeMap<bip32::Fingerprint, (&bip32::DerivationPath, secp256k1::PublicKey)>,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>> {
+        // Ensure that deriving `xpub` with `path` yields `expected`
+        let verify_key = |xpub: &MiniscriptExtendedKey,
+                          path: &bip32::DerivationPath,
+                          expected: &secp256k1::PublicKey| {
+            let derived = xpub
+                .key
+                .derive_pub(secp, path)
+                .expect("The path should never contain hardened derivation steps")
+                .public_key;
+
+            derived == *expected
+        };
+
+        let mut path_found = None;
+
+        self.iterate_keys(|key| {
+            if let Some(xpub) = key.as_extended_key() {
+                // Check if the key matches one entry in our `key_origins`. If it does, `matches()` will
+                // return the "prefix" that matched, so we remove that prefix from the full path
+                // found in `key_origins` and save it in `derive_path`. We expect this to be a derivation
+                // path of length 1 if the key is `wildcard` and an empty path otherwise.
+                let root_fingerprint = match xpub.origin {
+                    Some((fingerprint, _)) => fingerprint,
+                    None => xpub.key.fingerprint(),
+                };
+                let derive_path = key_origins
+                    .get_key_value(&root_fingerprint)
+                    .and_then(|(fingerprint, (path, expected))| {
+                        xpub_matches(xpub, &(*fingerprint, (*path).clone()))
+                            .zip(Some((path, expected)))
+                    })
+                    .and_then(|(prefix, (full_path, expected))| {
+                        let derive_path = full_path
+                            .into_iter()
+                            .skip(prefix.into_iter().count())
+                            .cloned()
+                            .collect::<bip32::DerivationPath>();
+
+                        // `derive_path` only contains the replacement index for the wildcard, if present, or
+                        // an empty path for fixed descriptors. To verify the key we also need the normal steps
+                        // that come before the wildcard, so we take them directly from `xpub` and then append
+                        // the final index
+                        if verify_key(
+                            xpub,
+                            &xpub.path.extend(derive_path.clone()),
+                            expected,
+                        ) {
+                            Some(derive_path)
+                        } else {
+                            log::debug!(
+                                "Key `{}` derived with {} yields an unexpected key",
+                                root_fingerprint,
+                                derive_path
+                            );
+                            None
+                        }
+                    });
+
+                match derive_path {
+                    Some(path) if xpub.wildcard != Wildcard::None && path.len() == 1 => {
+                        // Ignore hardened wildcards
+                        if let bip32::ChildNumber::Normal { index } = path[0] {
+                            path_found = Some(index);
+                            return;
+                        }
+                    }
+                    Some(path) if xpub.wildcard == Wildcard::None && path.is_empty() => {
+                        path_found = Some(0);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        path_found.map(|index| {
+            let mut copy = self.clone();
+            copy.derive(index).unwrap();
+            copy
+        })
+    }
+
+    fn derive_from_hd_keypaths<'s>(
+        &'a self,
+        hd_keypaths: &HdKeyPaths,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>> {
+        // "Convert" an hd_keypaths map to the format required by `derive_from_psbt_key_origins`
+        let key_origins = hd_keypaths
+            .iter()
+            .map(|(pk, (fingerprint, path))| {
+                (
+                    *fingerprint,
+                    (path, *pk),
+                )
+            })
+            .collect();
+        self.derive_from_psbt_key_origins(key_origins, secp)
+    }
+
+    fn derive_from_tap_key_origins<'s>(
+        &'a self,
+        tap_key_origins: &TapKeyOrigins,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>> {
+        // "Convert" a tap_key_origins map to the format required by `derive_from_psbt_key_origins`
+        let key_origins = tap_key_origins
+            .iter()
+            .map(|(pk, (_, (fingerprint, path)))| (*fingerprint, (path, pk.public_key(secp256k1::Parity::Even)))) // TODO: test parity here
+            .collect();
+        self.derive_from_psbt_key_origins(key_origins, secp)
+    }
+
+    fn derive_from_psbt_output<'s>(
+        &'a self,
+        psbt_output: &psbt::Output,
+        secp: &'s SecpCtx,
+    ) -> Option<ParserContext<'a>> {
+        if let Some(derived) = self.derive_from_hd_keypaths(&psbt_output.bip32_derivation, secp) {
+            return Some(derived);
+        }
+        if let Some(derived) = self.derive_from_tap_key_origins(&psbt_output.tap_key_origins, secp)
+        {
+            return Some(derived);
+        }
+
+        None
+    }
+}
