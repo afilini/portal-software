@@ -11,6 +11,7 @@ rustflags = [
   "-C", "linker=clang-20",
   "-C", "link-arg=-nostartfiles",
   "-C", "link-arg=-nostdlib",
+  "-C", "link-arg=-Wl,--export-dynamic-symbol=_SEGGER_RTT",
   "-C", "link-arg=-flto",
   "-C", "link-arg=-fuse-ld=lld",
   "-C", "link-arg=--target=thumbv7em-none-eabihf"
