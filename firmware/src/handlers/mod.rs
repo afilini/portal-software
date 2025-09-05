@@ -19,6 +19,7 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use tinyminiscript::descriptor::Descriptor;
 use core::cell::RefCell;
 use core::pin::Pin;
 
@@ -30,6 +31,8 @@ use tinyminiscript::bitcoin::{bip32, secp256k1, Network};
 use gui::{ConfirmBarPage, ErrorPage, MainContent, Page};
 use model::{FwUpdateHeader, NumWordsMnemonic, Reply};
 
+use crate::bitcoin_utils::SignerContext;
+use crate::bitcoin_utils::TransactionSigner;
 use crate::{checkpoint, hw, Error};
 
 #[allow(dead_code)]
@@ -45,17 +48,15 @@ pub struct BitcoinWallet {
     internal: String,
     network: Network,
     secp: secp256k1::Secp256k1<secp256k1::All>,
-    private_key: bip32::Xpriv,
-    allowed_prefixes: Vec<bip32::DerivationPath>,
+    signer: TransactionSigner,
 }
 
 impl BitcoinWallet {
     pub fn new(
         external: String,
         internal: String,
-        private_key: bip32::Xpriv,
+        signer: TransactionSigner,
         network: Network,
-        allowed_prefixes: Vec<bip32::DerivationPath>,
     ) -> Self {
         let secp = secp256k1::Secp256k1::new();
 
@@ -64,8 +65,7 @@ impl BitcoinWallet {
             internal,
             network,
             secp,
-            private_key,
-            allowed_prefixes,
+            signer,
         }
     }
 
@@ -75,6 +75,29 @@ impl BitcoinWallet {
 
     pub fn secp_ctx(&self) -> &secp256k1::Secp256k1<secp256k1::All> {
         &self.secp
+    }
+
+    pub fn context(&self) -> SignerContext {
+        match self.external().descriptor() {
+            Descriptor::Bare => SignerContext::Legacy,
+            Descriptor::Pkh => SignerContext::Legacy,
+            Descriptor::Sh => SignerContext::Legacy,
+            Descriptor::Wpkh => SignerContext::Segwitv0,
+            Descriptor::Wsh => SignerContext::Segwitv0,
+            Descriptor::Tr => SignerContext::Tap { is_internal_key: true }, // TODO: fix this when implementing taproot
+        }
+    }
+
+    pub fn external<'a>(&'a self) -> tinyminiscript::parser::ParserContext<'a> {
+        tinyminiscript::parser::parse(&self.external).map_err(|_| "Invalid descriptor").unwrap()
+    }
+
+    pub fn internal<'a>(&'a self) -> tinyminiscript::parser::ParserContext<'a> {
+        tinyminiscript::parser::parse(&self.internal).map_err(|_| "Invalid descriptor").unwrap()
+    }
+
+    pub fn signer(&self) -> &TransactionSigner {
+        &self.signer
     }
 }
 
